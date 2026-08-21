@@ -1,6 +1,6 @@
 {
   "name": "httptap",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "拦截并监控终端 HTTP/HTTPS 网络请求的工具（MITM 代理 + Web 界面）",
   "main": "index.js",
   "bin": {
@@ -34,6 +34,13 @@
   "bugs": "https://github.com/kiritoko1029/httptap/issues",
   "engines": {
     "node": ">=20"
+  },
+  "devEngines": {
+    "packageManager": {
+      "name": "npm",
+      "version": "12.0.2",
+      "onFail": "download"
+    }
   },
   "dependencies": {
     "http-mitm-proxy": "^0.10.0",

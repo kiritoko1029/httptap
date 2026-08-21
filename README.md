@@ -15,10 +15,18 @@
 ## 快速开始（npx，无需安装）
 
 ```bash
-npx httptap          # 代理端口 8888，Web 界面端口 8880
+npx httptap          # 前台运行：代理端口 8888，Web 界面端口 8880，Ctrl+C 退出
 ```
 
-自定义端口：
+后台运行并自动注入代理环境变量（当前终端即刻可用）：
+
+```bash
+eval "$(npx httptap on)"       # 后台启动 + 设置 http_proxy/https_proxy/no_proxy/NODE_EXTRA_CA_CERTS
+eval "$(npx httptap off)"      # 停止 + 清除环境变量
+# zsh 用户也可以用 source <(npx httptap on)
+```
+
+自定义端口（`on` 子命令同样支持）：
 
 ```bash
 npx httptap --proxy-port 8888 --ui-port 8880
