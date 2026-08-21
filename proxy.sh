@@ -12,7 +12,7 @@ PROXY_PORT="${PROXY_PORT:-8888}"
 UI_PORT="${UI_PORT:-8880}"
 PID_FILE="$DIR/.proxy.pid"
 LOG_FILE="$DIR/proxy.log"
-CA_FILE="$DIR/.http-mitm-proxy/certs/ca.pem"
+CA_FILE="$HOME/.httptap/certs/ca.pem"
 SOURCED=0
 [[ "${BASH_SOURCE[0]}" != "${0}" ]] && SOURCED=1
 

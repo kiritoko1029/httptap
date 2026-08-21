@@ -2,6 +2,7 @@
 'use strict';
 
 const path = require('path');
+const os = require('os');
 const { Store } = require('./src/store');
 const { startProxy } = require('./src/proxy');
 const { startUi } = require('./src/ui-server');
@@ -13,7 +14,9 @@ function arg(name, dflt) {
 
 const proxyPort = parseInt(arg('proxy-port', '8888'), 10);
 const uiPort = parseInt(arg('ui-port', '8880'), 10);
-const caDir = path.join(__dirname, '.http-mitm-proxy');
+// CA 放在用户主目录的固定位置：npx 运行时包目录在 npm 缓存里，缓存清理后 CA 会重新生成，
+// 导致系统钥匙串/环境变量里信任的旧证书失效
+const caDir = path.join(os.homedir(), '.httptap');
 
 const store = new Store(500);
 

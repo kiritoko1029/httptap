@@ -68,12 +68,12 @@ curl -x http://127.0.0.1:8888 https://example.com
 
 ### HTTPS 抓包
 
-HTTPS 内容解密基于 MITM：代理会用自己生成的 CA 给目标站点重新签发证书，所以客户端必须信任这个 CA（首次运行时生成在 `.http-mitm-proxy/certs/ca.pem`）。不信任的话，客户端会报证书错误（如 `unable to verify the first certificate`），属于预期现象。
+HTTPS 内容解密基于 MITM：代理会用自己生成的 CA 给目标站点重新签发证书，所以客户端必须信任这个 CA（首次运行时生成在 `~/.httptap/certs/ca.pem`）。不信任的话，客户端会报证书错误（如 `unable to verify the first certificate`），属于预期现象。
 
 **Node.js 程序**（kimi、npm 等，最简单，无需 sudo）：
 
 ```bash
-export NODE_EXTRA_CA_CERTS="$(pwd)/.http-mitm-proxy/certs/ca.pem"
+export NODE_EXTRA_CA_CERTS=~/.httptap/certs/ca.pem
 ```
 
 **系统级信任**（curl / git / 浏览器等，macOS）：
@@ -81,7 +81,7 @@ export NODE_EXTRA_CA_CERTS="$(pwd)/.http-mitm-proxy/certs/ca.pem"
 ```bash
 sudo security add-trusted-cert -d -r trustRoot \
   -k /Library/Keychains/System.keychain \
-  "$(pwd)/.http-mitm-proxy/certs/ca.pem"
+  ~/.httptap/certs/ca.pem
 ```
 
 临时测试也可以在客户端侧跳过校验，如 `curl -k`（不推荐长期使用）。
