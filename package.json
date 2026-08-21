@@ -1,0 +1,42 @@
+{
+  "name": "httptap",
+  "version": "1.0.0",
+  "description": "拦截并监控终端 HTTP/HTTPS 网络请求的工具（MITM 代理 + Web 界面）",
+  "main": "index.js",
+  "bin": {
+    "httptap": "index.js"
+  },
+  "scripts": {
+    "start": "node index.js"
+  },
+  "files": [
+    "index.js",
+    "proxy.sh",
+    "src",
+    "public"
+  ],
+  "keywords": [
+    "http",
+    "https",
+    "proxy",
+    "mitm",
+    "interceptor",
+    "packet-capture",
+    "debugging",
+    "network"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kiritoko1029/httptap.git"
+  },
+  "homepage": "https://github.com/kiritoko1029/httptap",
+  "bugs": "https://github.com/kiritoko1029/httptap/issues",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "http-mitm-proxy": "^0.10.0",
+    "uuid": "^14.0.2"
+  }
+}

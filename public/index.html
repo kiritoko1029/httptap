@@ -1,0 +1,746 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HTTP Interceptor</title>
+<style>
+  :root, :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #0d1117; --bg2: #161b22; --bg3: #21262d;
+    --border: #30363d; --border2: #21262d;
+    --fg: #c9d1d9; --muted: #8b949e;
+    --accent: #1f6feb; --accent-fg: #58a6ff; --sel: #1f2937;
+    --c-get: #3fb950; --c-post: #d29922; --c-put: #58a6ff;
+    --c-del: #f85149; --c-patch: #bc8cff;
+    --c-s2: #3fb950; --c-s3: #58a6ff; --c-s4: #d29922; --c-s5: #f85149;
+    --tk-key: #79c0ff; --tk-str: #a5d6ff; --tk-num: #79c0ff; --tk-kw: #ff7b72;
+  }
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --bg: #ffffff; --bg2: #f6f8fa; --bg3: #eaeef2;
+    --border: #d0d7de; --border2: #e6eaee;
+    --fg: #1f2328; --muted: #59636e;
+    --accent: #0969da; --accent-fg: #0550ae; --sel: #ddf0ff;
+    --c-get: #1a7f37; --c-post: #9a6700; --c-put: #0969da;
+    --c-del: #cf222e; --c-patch: #8250df;
+    --c-s2: #1a7f37; --c-s3: #0969da; --c-s4: #9a6700; --c-s5: #cf222e;
+    --tk-key: #0550ae; --tk-str: #0a3069; --tk-num: #0550ae; --tk-kw: #cf222e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; height: 100vh; display: flex; flex-direction: column;
+    font-family: -apple-system, "SF Pro Text", "PingFang SC", sans-serif;
+    background: var(--bg); color: var(--fg);
+  }
+  header {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 10px 16px; background: var(--bg2); border-bottom: 1px solid var(--border);
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  #filter {
+    width: 240px; background: var(--bg); border: 1px solid var(--border);
+    color: var(--fg); padding: 6px 10px; border-radius: 6px; outline: none;
+  }
+  #filter:focus { border-color: var(--accent); }
+  button {
+    background: var(--bg3); border: 1px solid var(--border); color: var(--fg);
+    padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px;
+  }
+  button:hover { border-color: var(--muted); }
+  #status { margin-left: auto; font-size: 12px; color: var(--muted); }
+  .subbar {
+    display: flex; align-items: center; gap: 8px; width: 100%;
+    font-size: 12px; color: var(--muted);
+  }
+  .subbar select, .subbar input {
+    background: var(--bg); border: 1px solid var(--border); color: var(--fg);
+    padding: 4px 8px; border-radius: 6px; outline: none; font-size: 12px;
+  }
+  .subbar input { width: 90px; }
+  .subbar select:focus, .subbar input:focus { border-color: var(--accent); }
+  main { flex: 1; display: flex; min-height: 0; }
+  #listPane { flex: 11; overflow-y: auto; min-width: 0; }
+  #splitter {
+    flex: none; width: 5px; cursor: col-resize;
+    background: var(--border); transition: background .15s;
+  }
+  #splitter:hover, body.dragging #splitter { background: var(--accent); }
+  body.dragging { cursor: col-resize; user-select: none; }
+  body.dragging iframe, body.dragging pre { pointer-events: none; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; font-family: Menlo, Consolas, monospace; }
+  thead th {
+    position: sticky; top: 0; background: var(--bg2); text-align: left; z-index: 2;
+    padding: 8px 10px; border-bottom: 1px solid var(--border); color: var(--muted); font-weight: 600;
+    cursor: pointer; user-select: none; white-space: nowrap;
+  }
+  thead th:hover { color: var(--fg); }
+  thead th .arrow { color: var(--accent-fg); margin-left: 3px; }
+  tbody td {
+    padding: 6px 10px; border-bottom: 1px solid var(--border2);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 480px;
+  }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover { background: var(--bg2); }
+  tbody tr.selected { background: var(--sel); }
+  tr.group td {
+    background: var(--bg2); color: var(--fg); font-weight: 600;
+    padding: 5px 10px; border-bottom: 1px solid var(--border);
+    cursor: pointer; user-select: none;
+    font-family: -apple-system, "SF Pro Text", "PingFang SC", sans-serif;
+  }
+  tr.group td .caret { display: inline-block; width: 14px; color: var(--muted); }
+  tr.group td .count { color: var(--muted); font-weight: 400; margin-left: 6px; }
+  tr.group:hover td { background: var(--bg3); }
+  tr.group .pin-btn {
+    float: right; font-size: 11px; font-weight: 400; color: var(--muted);
+    border: 1px solid var(--border); border-radius: 4px; padding: 0 8px;
+    opacity: 0; transition: opacity .15s;
+  }
+  tr.group:hover .pin-btn, tr.group.pinned .pin-btn { opacity: 1; }
+  tr.group .pin-btn:hover { color: var(--fg); border-color: var(--muted); }
+  tr.group.pinned .pin-btn { color: var(--accent-fg); border-color: var(--accent); }
+  tr.group.pinned td { box-shadow: inset 2px 0 0 var(--accent); }
+  .m { font-weight: 700; }
+  .GET { color: var(--c-get); } .POST { color: var(--c-post); } .PUT { color: var(--c-put); }
+  .DELETE { color: var(--c-del); } .PATCH { color: var(--c-patch); }
+  .s2 { color: var(--c-s2); } .s3 { color: var(--c-s3); } .s4 { color: var(--c-s4); } .s5 { color: var(--c-s5); }
+  .err { color: var(--c-s5); }
+  .muted { color: var(--muted); }
+  #detailPane {
+    flex: 9; display: flex; flex-direction: column; min-width: 0;
+  }
+  #detailPane .placeholder { margin: auto; color: var(--muted); font-size: 14px; }
+  #detailHead { padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 13px; }
+  #detailHead .url { color: var(--accent-fg); word-break: break-all; }
+  .tabs {
+    display: flex; gap: 6px; padding: 8px 10px;
+    border-bottom: 1px solid var(--border); align-items: center;
+  }
+  .tabs button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .tabs .spacer { flex: 1; }
+  .tabs .tool-btn { font-size: 12px; padding: 4px 10px; }
+  .tabs select.tool-btn { background: var(--bg3); }
+  .tabs .tool-btn.copied { color: var(--c-get); border-color: var(--c-get); }
+  #bodyWrap { position: relative; flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  #copyContentBtn {
+    position: absolute; top: 8px; right: 14px; z-index: 3;
+    font-size: 12px; padding: 4px 10px; opacity: 0; transition: opacity .15s;
+    box-shadow: 0 1px 4px rgba(0,0,0,.3);
+  }
+  #bodyWrap:hover #copyContentBtn, #copyContentBtn.copied { opacity: 1; }
+  #copyContentBtn.copied { color: var(--c-get); border-color: var(--c-get); }
+  #detailBody {
+    flex: 1; overflow: auto; margin: 0; padding: 12px 14px;
+    font-family: Menlo, Consolas, monospace; font-size: 12px; line-height: 1.6;
+    white-space: pre-wrap; word-break: break-all;
+    user-select: text; cursor: text; tab-size: 2;
+  }
+  .tk-key { color: var(--tk-key); }
+  .tk-str { color: var(--tk-str); }
+  .tk-num { color: var(--tk-num); }
+  .tk-kw { color: var(--tk-kw); }
+  .sse-ev {
+    border: 1px solid var(--border2); border-radius: 6px;
+    margin-bottom: 8px; background: var(--bg2); overflow: hidden;
+  }
+  .sse-ev-head {
+    padding: 4px 10px; border-bottom: 1px solid var(--border2);
+    font-size: 12px; font-family: Menlo, Consolas, monospace;
+  }
+  .sse-ev-head .sse-type { color: var(--accent-fg); font-weight: 600; }
+  .sse-ev pre {
+    margin: 0; padding: 8px 10px; font-size: 12px; line-height: 1.6;
+    font-family: Menlo, Consolas, monospace;
+    white-space: pre-wrap; word-break: break-all;
+  }
+  #empty { padding: 40px; text-align: center; color: var(--muted); font-size: 14px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>HTTP Interceptor</h1>
+  <input id="filter" placeholder="过滤 URL / 方法 / Host…">
+  <button id="clearBtn">清空</button>
+  <button id="themeBtn" title="切换主题">切换主题</button>
+  <span id="status">连接中…</span>
+  <div class="subbar">
+    <label>方法 <select id="methodFilter"><option value="">全部</option></select></label>
+    <label>状态 <select id="statusFilter">
+      <option value="">全部</option>
+      <option value="2">2xx</option>
+      <option value="3">3xx</option>
+      <option value="4">4xx</option>
+      <option value="5">5xx</option>
+      <option value="err">错误</option>
+      <option value="pending">进行中</option>
+    </select></label>
+    <label>耗时 ≥ <input id="durFilter" type="number" min="0" placeholder="ms"></label>
+    <label>时间 <select id="timeFilter">
+      <option value="">全部</option>
+      <option value="60">近 1 分钟</option>
+      <option value="300">近 5 分钟</option>
+      <option value="900">近 15 分钟</option>
+      <option value="3600">近 1 小时</option>
+    </select></label>
+    <button id="resetFilter" class="tool-btn" style="padding:4px 10px;font-size:12px">重置筛选</button>
+    <button id="toggleGroups" class="tool-btn" style="padding:4px 10px;font-size:12px">折叠全部</button>
+  </div>
+</header>
+<main>
+  <div id="listPane">
+    <table>
+      <thead id="thead"></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+    <div id="empty">暂无请求。在终端设置代理后发起请求即可看到记录。</div>
+  </div>
+  <div id="splitter"></div>
+  <div id="detailPane"><div class="placeholder">点击左侧请求查看详情</div></div>
+</main>
+
+<script>
+const tbody = document.getElementById('tbody');
+const thead = document.getElementById('thead');
+const emptyTip = document.getElementById('empty');
+const detailPane = document.getElementById('detailPane');
+const filterInput = document.getElementById('filter');
+const statusEl = document.getElementById('status');
+const methodFilter = document.getElementById('methodFilter');
+const statusFilter = document.getElementById('statusFilter');
+const durFilter = document.getElementById('durFilter');
+const timeFilter = document.getElementById('timeFilter');
+
+let all = [];
+let selectedId = null;
+let currentTab = 'resBody';
+let currentDetail = null;
+let currentRaw = '';   // 当前 tab 的原始文本（用于复制）
+let currentLang = '';  // 'json' | 'headers' | 'sse' | ''
+let sseView = 'events'; // SSE 视图：events | text | raw
+const collapsed = new Set();  // 被折叠的域名分组
+// 置顶分组（持久化）
+const pinned = new Set();
+try { JSON.parse(localStorage.getItem('hi-pins') || '[]').forEach((d) => pinned.add(d)); } catch (_) {}
+function savePins() { localStorage.setItem('hi-pins', JSON.stringify([...pinned])); }
+
+// 排序状态（持久化）
+let sort = { key: 'startedAt', dir: 'desc' };
+try { Object.assign(sort, JSON.parse(localStorage.getItem('hi-sort') || '{}')); } catch (_) {}
+
+const COLUMNS = [
+  ['method', '方法'], ['status', '状态'], ['url', 'URL'],
+  ['resSize', '大小'], ['durationMs', '耗时'], ['startedAt', '时间'],
+];
+
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+function fmtSize(n) {
+  if (!n) return '-';
+  if (n < 1024) return n + ' B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+  return (n / 1024 / 1024).toFixed(1) + ' MB';
+}
+function fmtTime(ts) {
+  return new Date(ts).toLocaleTimeString('zh-CN', { hour12: false });
+}
+
+// 取 URL 的根域名（含常见二级后缀如 com.cn / co.uk）
+function rootDomain(s) {
+  let host = s.host || '';
+  if (!host) { try { host = new URL(s.url).hostname; } catch (_) { return '(未知)'; } }
+  host = host.split(':')[0];
+  if (!host) return '(未知)';
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(host) || host === 'localhost' || !host.includes('.')) return host;
+  const parts = host.split('.');
+  const sld = ['co', 'com', 'net', 'org', 'gov', 'edu', 'ac'];
+  if (parts.length >= 3 && parts[parts.length - 1].length === 2 && sld.includes(parts[parts.length - 2])) {
+    return parts.slice(-3).join('.');
+  }
+  return parts.slice(-2).join('.');
+}
+
+// ---------- 语法高亮 ----------
+function highlightJSON(text) {
+  const re = /("(?:\\.|[^"\\])*")(\s*:)?|\b(?:true|false|null)\b|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g;
+  let html = '', last = 0, m;
+  while ((m = re.exec(text))) {
+    html += esc(text.slice(last, m.index));
+    if (m[1] !== undefined) {
+      if (m[2]) html += `<span class="tk-key">${esc(m[1])}</span>${esc(m[2])}`;
+      else html += `<span class="tk-str">${esc(m[1])}</span>`;
+    } else if (/^(?:true|false|null)$/.test(m[0])) {
+      html += `<span class="tk-kw">${m[0]}</span>`;
+    } else {
+      html += `<span class="tk-num">${m[0]}</span>`;
+    }
+    last = m.index + m[0].length;
+  }
+  return html + esc(text.slice(last));
+}
+
+function highlightHeaders(text) {
+  return text.split('\n').map((line) => {
+    const i = line.indexOf(':');
+    if (i <= 0) return esc(line);
+    return `<span class="tk-key">${esc(line.slice(0, i))}</span>${esc(line.slice(i))}`;
+  }).join('\n');
+}
+
+// ---------- 主题 ----------
+const themeBtn = document.getElementById('themeBtn');
+function applyTheme(t) {
+  document.documentElement.dataset.theme = t;
+  localStorage.setItem('hi-theme', t);
+}
+themeBtn.onclick = () => {
+  applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
+};
+applyTheme(localStorage.getItem('hi-theme') ||
+  (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'));
+
+// ---------- 分栏拖拽 ----------
+const splitter = document.getElementById('splitter');
+const listPane = document.getElementById('listPane');
+const mainEl = document.querySelector('main');
+const savedW = parseFloat(localStorage.getItem('hi-split'));
+if (savedW) { listPane.style.flex = 'none'; listPane.style.width = savedW + '%'; }
+splitter.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  splitter.setPointerCapture(e.pointerId);
+  document.body.classList.add('dragging');
+  const onMove = (ev) => {
+    const rect = mainEl.getBoundingClientRect();
+    let pct = (ev.clientX - rect.left) / rect.width * 100;
+    pct = Math.min(85, Math.max(15, pct));
+    listPane.style.flex = 'none';
+    listPane.style.width = pct + '%';
+  };
+  const onUp = () => {
+    document.body.classList.remove('dragging');
+    splitter.removeEventListener('pointermove', onMove);
+    splitter.removeEventListener('pointerup', onUp);
+    splitter.removeEventListener('pointercancel', onUp);
+    localStorage.setItem('hi-split', parseFloat(listPane.style.width));
+  };
+  splitter.addEventListener('pointermove', onMove);
+  splitter.addEventListener('pointerup', onUp);
+  splitter.addEventListener('pointercancel', onUp);
+});
+
+// ---------- 筛选 ----------
+function passesFilters(s) {
+  if (methodFilter.value && s.method !== methodFilter.value) return false;
+  const sf = statusFilter.value;
+  if (sf === 'err') { if (!s.error) return false; }
+  else if (sf === 'pending') { if (s.error || s.status) return false; }
+  else if (sf) { if (s.error || String(s.status || '')[0] !== sf) return false; }
+  const minDur = parseFloat(durFilter.value);
+  if (!isNaN(minDur) && (s.durationMs == null || s.durationMs < minDur)) return false;
+  const tf = parseInt(timeFilter.value, 10);
+  if (tf && Date.now() - s.startedAt > tf * 1000) return false;
+  return true;
+}
+
+function matches(s, q) {
+  if (q) {
+    q = q.toLowerCase();
+    if (!(s.url.toLowerCase().includes(q) ||
+      s.method.toLowerCase().includes(q) ||
+      (s.host || '').toLowerCase().includes(q))) return false;
+  }
+  return passesFilters(s);
+}
+
+function refreshMethodOptions() {
+  const cur = methodFilter.value;
+  const methods = [...new Set(all.map((s) => s.method))].sort();
+  const html = '<option value="">全部</option>' +
+    methods.map((m) => `<option value="${esc(m)}">${esc(m)}</option>`).join('');
+  if (methodFilter.dataset.opts !== html) {
+    methodFilter.innerHTML = html;
+    methodFilter.dataset.opts = html;
+    methodFilter.value = cur;
+  }
+}
+
+[methodFilter, statusFilter, durFilter, timeFilter].forEach((el) =>
+  el.addEventListener('input', render));
+document.getElementById('resetFilter').onclick = () => {
+  filterInput.value = '';
+  methodFilter.value = '';
+  statusFilter.value = '';
+  durFilter.value = '';
+  timeFilter.value = '';
+  render();
+};
+
+// ---------- 一键折叠 / 展开 ----------
+const toggleGroupsBtn = document.getElementById('toggleGroups');
+function visibleDomains() {
+  const q = filterInput.value.trim();
+  return [...new Set(all.filter((s) => matches(s, q)).map(rootDomain))];
+}
+toggleGroupsBtn.onclick = () => {
+  const domains = visibleDomains();
+  const allCollapsed = domains.length > 0 && domains.every((d) => collapsed.has(d));
+  if (allCollapsed) domains.forEach((d) => collapsed.delete(d));
+  else domains.forEach((d) => collapsed.add(d));
+  render();
+};
+
+// ---------- 排序 ----------
+function renderHead() {
+  thead.innerHTML = '<tr>' + COLUMNS.map(([k, label]) => {
+    const arrow = sort.key === k
+      ? `<span class="arrow">${sort.dir === 'asc' ? '▲' : '▼'}</span>` : '';
+    return `<th data-sort="${k}">${label}${arrow}</th>`;
+  }).join('') + '</tr>';
+}
+thead.addEventListener('click', (e) => {
+  const th = e.target.closest('th');
+  if (!th) return;
+  const k = th.dataset.sort;
+  if (sort.key === k) sort.dir = sort.dir === 'asc' ? 'desc' : 'asc';
+  else sort = { key: k, dir: k === 'startedAt' ? 'desc' : 'asc' };
+  localStorage.setItem('hi-sort', JSON.stringify(sort));
+  render();
+});
+
+function sortVal(s, key) {
+  if (key === 'status') return s.error ? -1 : (s.status || 0);
+  const v = s[key];
+  return v == null ? -1 : v;
+}
+
+// ---------- 列表渲染（按根域名分组） ----------
+function render() {
+  refreshMethodOptions();
+  const q = filterInput.value.trim();
+  const rows = all.filter((s) => matches(s, q));
+  const mul = sort.dir === 'asc' ? 1 : -1;
+  rows.sort((a, b) => {
+    const va = sortVal(a, sort.key), vb = sortVal(b, sort.key);
+    if (va < vb) return -1 * mul;
+    if (va > vb) return 1 * mul;
+    return (b.startedAt - a.startedAt); // 次级按时间倒序
+  });
+
+  // 按根域名分组，组的顺序取组内首条记录的位置（即已排序）
+  const groups = new Map();
+  for (const s of rows) {
+    const g = rootDomain(s);
+    if (!groups.has(g)) groups.set(g, []);
+    groups.get(g).push(s);
+  }
+
+  emptyTip.style.display = rows.length ? 'none' : '';
+  // 置顶的分组排在最前，其余保持排序后的出现顺序
+  const ordered = [...groups.entries()].sort((a, b) =>
+    (pinned.has(b[0]) ? 1 : 0) - (pinned.has(a[0]) ? 1 : 0));
+  let html = '';
+  for (const [domain, list] of ordered) {
+    const isCollapsed = collapsed.has(domain);
+    const isPinned = pinned.has(domain);
+    html += `<tr class="group${isPinned ? ' pinned' : ''}" data-domain="${esc(domain)}">
+      <td colspan="6"><span class="caret">${isCollapsed ? '▸' : '▾'}</span>${esc(domain)}<span class="count">${list.length} 条</span><span class="pin-btn">${isPinned ? '取消置顶' : '置顶'}</span></td>
+    </tr>`;
+    if (isCollapsed) continue;
+    html += list.map((s) => {
+      const statusCls = s.error ? 'err' : 's' + String(s.status || '')[0];
+      const statusTxt = s.error ? 'ERR' : (s.status || '…');
+      return `<tr data-id="${s.id}" class="${s.id === selectedId ? 'selected' : ''}">
+        <td class="m ${esc(s.method)}">${esc(s.method)}</td>
+        <td class="${statusCls}">${esc(statusTxt)}</td>
+        <td title="${esc(s.url)}">${esc(s.url)}</td>
+        <td class="muted">${fmtSize(s.resSize)}</td>
+        <td class="muted">${s.durationMs != null ? s.durationMs + ' ms' : '…'}</td>
+        <td class="muted">${fmtTime(s.startedAt)}</td>
+      </tr>`;
+    }).join('');
+  }
+  tbody.innerHTML = html;
+  statusEl.textContent = `共 ${all.length} 条请求` +
+    (rows.length !== all.length ? `，筛选后 ${rows.length} 条` : '');
+  // 分组全部折叠时按钮切换为「展开全部」
+  const domains = [...groups.keys()];
+  toggleGroupsBtn.textContent =
+    domains.length > 0 && domains.every((d) => collapsed.has(d)) ? '展开全部' : '折叠全部';
+}
+
+tbody.addEventListener('click', (e) => {
+  const tr = e.target.closest('tr');
+  if (!tr) return;
+  if (tr.classList.contains('group')) {
+    const d = tr.dataset.domain;
+    if (e.target.closest('.pin-btn')) {
+      pinned.has(d) ? pinned.delete(d) : pinned.add(d);
+      savePins();
+    } else {
+      collapsed.has(d) ? collapsed.delete(d) : collapsed.add(d);
+    }
+    render();
+    return;
+  }
+  select(Number(tr.dataset.id));
+});
+
+async function select(id) {
+  selectedId = id;
+  render();
+  const res = await fetch('/api/requests/' + id);
+  if (!res.ok) return;
+  currentDetail = await res.json();
+  renderDetail();
+}
+
+// ---------- 详情 ----------
+function renderHeaders(h) {
+  const keys = Object.keys(h || {});
+  if (!keys.length) return { text: '(无)', lang: '' };
+  return { text: keys.map((k) => `${k}: ${h[k]}`).join('\n'), lang: 'headers' };
+}
+
+// ---------- SSE（流式响应）解析 ----------
+function isSSE(headers, text) {
+  if (/text\/event-stream/i.test((headers && headers['content-type']) || '')) return true;
+  return /^data: /m.test(text) && /\n\s*\n/.test(text);
+}
+
+function parseSSE(text) {
+  const events = [];
+  for (const block of text.split(/\r?\n\s*\r?\n/)) {
+    if (!block.trim()) continue;
+    let event = 'message';
+    const dataLines = [];
+    for (const line of block.split(/\r?\n/)) {
+      if (line.startsWith(':')) continue; // 注释/心跳行
+      const i = line.indexOf(':');
+      const field = i < 0 ? line : line.slice(0, i);
+      const value = i < 0 ? '' : line.slice(i + 1).replace(/^ /, '');
+      if (field === 'event') event = value;
+      else if (field === 'data') dataLines.push(value);
+    }
+    if (!dataLines.length) continue;
+    const data = dataLines.join('\n');
+    let json = null;
+    try { json = JSON.parse(data); } catch (_) {}
+    events.push({ event, data, json });
+  }
+  return events;
+}
+
+// 从事件流聚合增量文本，兼容 OpenAI responses / chat completions / Anthropic 三种格式
+function sseText(events) {
+  let out = '';
+  for (const ev of events) {
+    const j = ev.json;
+    if (!j) continue;
+    if (typeof j.delta === 'string') { out += j.delta; continue; }          // responses API
+    const c = j.choices && j.choices[0];
+    if (c) {
+      if (c.delta && typeof c.delta.content === 'string') { out += c.delta.content; continue; }
+      if (typeof c.text === 'string') { out += c.text; continue; }
+    }
+    if (j.type === 'content_block_delta' && j.delta && typeof j.delta.text === 'string') {
+      out += j.delta.text;                                                   // Anthropic
+    }
+  }
+  return out;
+}
+
+function renderBody(b, headers, truncated) {
+  if (!b) return { text: '(空)', lang: '' };
+  let text, lang = '', events = null;
+  if (b.encoding === 'utf8') {
+    text = b.data;
+    if (isSSE(headers, text)) {
+      lang = 'sse';
+      events = parseSSE(text);
+    } else {
+      // 优先按 content-type，其次尝试直接解析（兼容未声明 JSON 的接口）
+      try {
+        text = JSON.stringify(JSON.parse(text), null, 2);
+        lang = 'json';
+      } catch (_) {}
+    }
+  } else {
+    text = `[二进制内容, base64, ${Math.round(b.data.length * 3 / 4)} 字节]\n\n${b.data}`;
+  }
+  return { text, lang, events, note: truncated ? '\n\n…(内容过大，已截断)' : '' };
+}
+
+// ---------- 复制 / 导出 ----------
+async function copyText(text, btn, label) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (_) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    ta.remove();
+  }
+  const orig = btn.textContent;
+  btn.textContent = '已复制 ✓';
+  btn.classList.add('copied');
+  setTimeout(() => { btn.textContent = label || orig; btn.classList.remove('copied'); }, 1200);
+}
+
+// 这些头由 curl/fetch 自行生成，导出时剔除
+const SKIP_HEADERS = ['host', 'content-length', 'connection'];
+function exportHeaders(d) {
+  const out = {};
+  for (const [k, v] of Object.entries(d.reqHeaders || {})) {
+    if (!SKIP_HEADERS.includes(k.toLowerCase())) out[k] = Array.isArray(v) ? v.join(', ') : v;
+  }
+  return out;
+}
+function exportBody(d) {
+  return (d.reqBody && d.reqBody.encoding === 'utf8' && d.reqBody.data) || null;
+}
+function shellQuote(s) { return `'${String(s).replace(/'/g, `'\\''`)}'`; }
+
+function toCurl(d) {
+  const parts = [`curl -X ${d.method} ${shellQuote(d.url)}`];
+  for (const [k, v] of Object.entries(exportHeaders(d))) {
+    parts.push(`-H ${shellQuote(k + ': ' + v)}`);
+  }
+  const body = exportBody(d);
+  if (body) parts.push(`--data-raw ${shellQuote(body)}`);
+  return parts.join(' \\\n  ');
+}
+
+function toFetch(d) {
+  const opts = { method: d.method };
+  const headers = exportHeaders(d);
+  if (Object.keys(headers).length) opts.headers = headers;
+  const body = exportBody(d);
+  if (body) opts.body = body;
+  return `fetch(${JSON.stringify(d.url)}, ${JSON.stringify(opts, null, 2)})\n` +
+    `  .then((res) => res.json())\n  .then(console.log);`;
+}
+
+function renderDetail() {
+  const d = currentDetail;
+  if (!d) return;
+  const tabs = [
+    ['resBody', '响应体'],
+    ['resHeaders', '响应头'],
+    ['reqBody', '请求体'],
+    ['reqHeaders', '请求头'],
+  ];
+  let out;
+  if (currentTab === 'resBody') out = renderBody(d.resBody, d.resHeaders, d.resBodyTruncated);
+  else if (currentTab === 'reqBody') out = renderBody(d.reqBody, d.reqHeaders, d.reqBodyTruncated);
+  else if (currentTab === 'resHeaders') out = renderHeaders(d.resHeaders);
+  else out = renderHeaders(d.reqHeaders);
+  currentLang = out.lang;
+
+  let badge = currentLang === 'json' ? '<span class="muted" style="font-size:12px">JSON</span>' : '';
+  let sseSwitcher = '';
+  let bodyHtml;
+
+  if (currentLang === 'sse') {
+    const events = out.events;
+    badge = `<span class="muted" style="font-size:12px">SSE · ${events.length} 个事件</span>`;
+    sseSwitcher = [['events', '事件'], ['text', '聚合文本'], ['raw', '原始']]
+      .map(([k, label]) => `<button data-sseview="${k}" class="tool-btn${k === sseView ? ' active' : ''}">${label}</button>`)
+      .join('');
+    if (sseView === 'text') {
+      const agg = sseText(events);
+      currentRaw = agg || '(未能从事件流中提取增量文本)';
+      bodyHtml = `<pre id="detailBody">${esc(currentRaw)}</pre>`;
+    } else if (sseView === 'raw') {
+      currentRaw = out.text + (out.note || '');
+      bodyHtml = `<pre id="detailBody">${esc(currentRaw)}</pre>`;
+    } else {
+      currentRaw = JSON.stringify(events.map((e) =>
+        e.json !== null ? { event: e.event, data: e.json } : { event: e.event, data: e.data }), null, 2);
+      bodyHtml = `<div id="detailBody" class="sse-list">${events.map((e, i) => `
+        <div class="sse-ev">
+          <div class="sse-ev-head"><span class="muted">#${i + 1}</span> <span class="sse-type">${esc(e.event)}</span>${e.data === '[DONE]' ? ' <span class="muted">[DONE]</span>' : ''}</div>
+          <pre>${e.json !== null ? highlightJSON(JSON.stringify(e.json, null, 2)) : esc(e.data || '(无数据)')}</pre>
+        </div>`).join('') || '<div class="muted" style="padding:20px">未解析到事件</div>'}</div>`;
+    }
+  } else {
+    currentRaw = out.text + (out.note || '');
+    const inner = currentLang === 'json' ? highlightJSON(out.text)
+      : currentLang === 'headers' ? highlightHeaders(out.text)
+      : esc(currentRaw);
+    bodyHtml = `<pre id="detailBody">${inner}</pre>`;
+  }
+
+  detailPane.innerHTML = `
+    <div id="detailHead">
+      <div><b class="m ${esc(d.method)}">${esc(d.method)}</b>
+        <span class="url">${esc(d.url)}</span></div>
+      <div class="muted">${d.error ? '错误: ' + esc(d.error) : '状态: ' + (d.status || '…')}
+        · 耗时 ${d.durationMs != null ? d.durationMs + ' ms' : '…'}
+        · 请求 ${fmtSize(d.reqSize)} / 响应 ${fmtSize(d.resSize)}</div>
+    </div>
+    <div class="tabs">${tabs.map(([k, label]) =>
+      `<button data-tab="${k}" class="${k === currentTab ? 'active' : ''}">${label}</button>`).join('')}
+      ${sseSwitcher}
+      <span class="spacer"></span>
+      ${badge}
+      <select id="exportFmt" class="tool-btn">
+        <option value="curl">cURL</option>
+        <option value="fetch">fetch</option>
+      </select>
+      <button id="exportBtn" class="tool-btn">复制请求代码</button>
+    </div>
+    <div id="bodyWrap">
+      <pre id="detailBody">${bodyHtml}</pre>
+      <button id="copyContentBtn" title="复制当前内容">复制</button>
+    </div>`;
+
+  detailPane.querySelectorAll('.tabs button[data-tab]').forEach((btn) => {
+    btn.onclick = () => { currentTab = btn.dataset.tab; renderDetail(); };
+  });
+  detailPane.querySelectorAll('button[data-sseview]').forEach((btn) => {
+    btn.onclick = () => { sseView = btn.dataset.sseview; renderDetail(); };
+  });
+
+  // 导出为 cURL / fetch 代码
+  const exportFmt = document.getElementById('exportFmt');
+  exportFmt.value = localStorage.getItem('hi-export-fmt') || 'curl';
+  exportFmt.onchange = () => localStorage.setItem('hi-export-fmt', exportFmt.value);
+  const exportBtn = document.getElementById('exportBtn');
+  exportBtn.onclick = () => {
+    const code = exportFmt.value === 'fetch' ? toFetch(d) : toCurl(d);
+    copyText(code, exportBtn, '复制请求代码');
+  };
+
+  // 悬浮按钮：复制当前内容
+  const copyContentBtn = document.getElementById('copyContentBtn');
+  copyContentBtn.onclick = () => copyText(currentRaw, copyContentBtn, '复制');
+}
+
+document.getElementById('clearBtn').onclick = () => fetch('/api/clear', { method: 'POST' });
+filterInput.addEventListener('input', render);
+
+const es = new EventSource('/api/stream');
+es.addEventListener('entry', (e) => {
+  const s = JSON.parse(e.data);
+  const i = all.findIndex((x) => x.id === s.id);
+  if (i >= 0) all[i] = s; else all.unshift(s);
+  render();
+  if (selectedId === s.id) select(s.id);
+});
+es.addEventListener('cleared', () => {
+  all = [];
+  selectedId = null;
+  currentDetail = null;
+  detailPane.innerHTML = '<div class="placeholder">点击左侧请求查看详情</div>';
+  render();
+});
+es.onerror = () => { statusEl.textContent = '连接断开，重连中…'; };
+
+fetch('/api/requests').then((r) => r.json()).then((list) => { all = list; render(); });
+renderHead();
+</script>
+</body>
+</html>
