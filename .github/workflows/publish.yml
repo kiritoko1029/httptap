@@ -5,6 +5,7 @@ on:
     types: [published]
 
 permissions:
+  id-token: write   # npm Trusted Publishing (OIDC)，无需 NPM_TOKEN
   contents: read
 
 jobs:
@@ -15,11 +16,12 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           registry-url: https://registry.npmjs.org
 
       - run: npm ci
 
-      - run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # Trusted Publishing 需要 npm CLI >= 11.5.1
+      - run: npm install -g npm@latest
+
+      - run: npm publish --access public --provenance
