@@ -36,7 +36,11 @@
     "node": ">=20"
   },
   "dependencies": {
-    "http-mitm-proxy": "^0.10.0",
-    "uuid": "^14.0.2"
+    "http-mitm-proxy": "^1.1.0"
+  },
+  "overrides": {
+    "http-mitm-proxy": {
+      "uuid": "^11.0.0"
+    }
   }
 }

@@ -1,6 +1,8 @@
 'use strict';
 
-const Proxy = require('http-mitm-proxy').default || require('http-mitm-proxy');
+// 兼容导出差异：0.10.x 挂在 .default，1.x 是命名导出 .Proxy
+const mitm = require('http-mitm-proxy');
+const Proxy = mitm.Proxy || mitm.default || mitm;
 const { MAX_BODY_BYTES } = require('./store');
 const { createAgentCache } = require('./upstream');
 
