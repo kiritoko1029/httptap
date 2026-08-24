@@ -39,6 +39,13 @@ eval "$(npx httptap off)"      # 停止 + 清除环境变量
 npx httptap --proxy-port 8888 --ui-port 8880
 ```
 
+日常查看与访问：
+
+```bash
+npx httptap status   # 运行状态、端口、上游代理、系统代理接管情况（未运行时退出码为 1）
+npx httptap web      # 用浏览器打开运行中实例的 Web 界面
+```
+
 ## 源码方式
 
 ```bash

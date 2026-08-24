@@ -17,7 +17,7 @@ const LOG_FILE = path.join(CA_DIR, 'httptap.log');
 const STATE_FILE = path.join(CA_DIR, 'sysproxy-state.json'); // 系统代理接管状态（见 src/sysproxy.js）
 const SYSTEM_CA_BUNDLE = '/etc/ssl/cert.pem'; // macOS 系统根证书（LibreSSL bundle）
 
-const COMMANDS = ['on', 'off', 'run', 'serve', 'sysproxy', 'trust', 'help'];
+const COMMANDS = ['on', 'off', 'run', 'serve', 'sysproxy', 'trust', 'status', 'web', 'help'];
 
 // 第一个出现的子命令把参数切成两段；run 之后的内容全部视为子进程命令，不解析其中的参数
 const argv = process.argv.slice(2);
@@ -87,6 +87,8 @@ function printHelp() {
   httptap [选项]                     前台运行代理 + Web 界面（同 serve）
   httptap [选项] on                  后台启动并输出代理环境变量（${onHint}）
   httptap off                        停止后台服务（系统代理接管中时会一并还原）
+  httptap status                     查看运行状态、端口、上游代理与系统代理接管情况
+  httptap web                        用浏览器打开运行中实例的 Web 界面
   httptap [选项] run [--] <命令...>  只拦截指定进程的流量
   httptap [选项] sysproxy on         系统代理指向 httptap（拦截浏览器 / GUI 应用）
   httptap sysproxy off | status      还原系统代理 / 查看接管状态
@@ -138,6 +140,32 @@ function fetchConfig(done) {
       setTimeout(poll, 300);
     }
   })();
+}
+
+// status/web 用的一次性探测：不重试不等待启动，800ms 无响应即返回 null
+function probeConfig(done) {
+  let called = false;
+  const finish = (config) => {
+    if (!called) {
+      called = true;
+      done(config);
+    }
+  };
+  const req = http.get({ host: '127.0.0.1', port: uiPort, path: '/api/config', timeout: 800 }, (res) => {
+    let body = '';
+    res.on('data', (c) => { body += c; });
+    res.on('end', () => {
+      let config = null;
+      if (res.statusCode === 200) {
+        try {
+          config = JSON.parse(body);
+        } catch (_) {}
+      }
+      finish(config);
+    });
+  });
+  req.on('timeout', () => { req.destroy(); finish(null); });
+  req.on('error', () => finish(null));
 }
 
 function startDaemon(done) {
@@ -267,6 +295,42 @@ if (cmd === 'help' || optTokens.includes('--help') || optTokens.includes('-h') |
     }
   }
   printUnsets();
+} else if (cmd === 'status') {
+  // 总览：服务运行状态 + 系统代理接管状态 + CA/日志位置
+  const pid = readPid();
+  probeConfig((config) => {
+    const st = require('./src/sysproxy').loadState(STATE_FILE);
+    if (config) {
+      console.log(`状态:      运行中${pid ? `（后台，pid ${pid}）` : '（前台）'}`);
+      console.log(`代理:      127.0.0.1:${config.proxyPort}`);
+      console.log(`Web 界面:  ${paint(process.stdout, `http://127.0.0.1:${config.uiPort}`)}`);
+      console.log(`上游代理:  ${config.upstream || '无（直连）'}`);
+    } else {
+      console.log(`状态:      未在运行${pid ? '（pid 文件残留但界面无响应，可执行 httptap off 清理）' : ''}`);
+    }
+    if (st) {
+      const up = [];
+      if (st.upstream && st.upstream.http) up.push(`http→${st.upstream.http.host}:${st.upstream.http.port}`);
+      if (st.upstream && st.upstream.https) up.push(`https→${st.upstream.https.host}:${st.upstream.https.port}`);
+      console.log(`系统代理:  已被 httptap 接管 → 127.0.0.1:${st.proxyPort}，上游: ${up.join('，') || '无（直连）'}`);
+    } else {
+      console.log('系统代理:  未接管');
+    }
+    console.log(`CA 证书:   ${fs.existsSync(CA_FILE) ? CA_FILE : '未生成（首次运行自动创建）'}`);
+    console.log(`日志文件:  ${LOG_FILE}`);
+    process.exitCode = config ? 0 : 1; // 未运行时退出码非零，方便脚本判断
+  });
+} else if (cmd === 'web') {
+  // 打开运行中实例的 Web 界面；不隐式启动服务（启动用 on / serve）
+  probeConfig((config) => {
+    if (!config) {
+      console.error('httptap 未在运行，先执行 httptap on 或 npx httptap 启动');
+      process.exit(1);
+    }
+    const uiUrl = `http://127.0.0.1:${config.uiPort}`;
+    openBrowser(uiUrl);
+    console.log(`已在浏览器打开 ${paint(process.stdout, uiUrl)}`);
+  });
 } else if (cmd === 'sysproxy') {
   const action = argv[cmdIndex + 1];
   const sysproxy = require('./src/sysproxy');
