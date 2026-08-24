@@ -17,7 +17,7 @@ const LOG_FILE = path.join(CA_DIR, 'httptap.log');
 const STATE_FILE = path.join(CA_DIR, 'sysproxy-state.json'); // 系统代理接管状态（见 src/sysproxy.js）
 const SYSTEM_CA_BUNDLE = '/etc/ssl/cert.pem'; // macOS 系统根证书（LibreSSL bundle）
 
-const COMMANDS = ['on', 'off', 'run', 'serve', 'sysproxy', 'trust', 'status', 'web', 'help'];
+const COMMANDS = ['on', 'off', 'run', 'serve', 'sysproxy', 'trust', 'status', 'web', 'config', 'restart', 'help'];
 
 // 第一个出现的子命令把参数切成两段；run 之后的内容全部视为子进程命令，不解析其中的参数
 const argv = process.argv.slice(2);
@@ -40,8 +40,10 @@ function arg(name, dflt) {
   return i >= 0 && optTokens[i + 1] && !optTokens[i + 1].startsWith('--') ? optTokens[i + 1] : dflt;
 }
 
-const proxyPort = parseInt(arg('proxy-port', '8888'), 10);
-const uiPort = parseInt(arg('ui-port', '8880'), 10);
+// 端口来源优先级：命令行 flag > 配置文件（~/.httptap/config.json）> 内置默认
+const fileCfg = require('./src/config').load();
+const proxyPort = parseInt(arg('proxy-port', String(fileCfg.proxyPort)), 10);
+const uiPort = parseInt(arg('ui-port', String(fileCfg.uiPort)), 10);
 const upstreamFlag = arg('upstream', undefined); // 默认自动探测；'none' 表示不串联上游代理
 const noOpen = optTokens.includes('--no-open'); // 启动后不自动打开 Web 界面
 
@@ -89,6 +91,8 @@ function printHelp() {
   httptap off                        停止后台服务（系统代理接管中时会一并还原）
   httptap status                     查看运行状态、端口、上游代理与系统代理接管情况
   httptap web                        用浏览器打开运行中实例的 Web 界面
+  httptap config                     用浏览器直接打开配置窗口（端口 / 局域网暴露 / 仅监控进程）
+  httptap restart                    重启后台服务（系统代理接管中会保持接管）
   httptap [选项] run [--] <命令...>  只拦截指定进程的流量
   httptap [选项] sysproxy on         系统代理指向 httptap（拦截浏览器 / GUI 应用）
   httptap sysproxy off | status      还原系统代理 / 查看接管状态
@@ -305,6 +309,8 @@ if (cmd === 'help' || optTokens.includes('--help') || optTokens.includes('-h') |
       console.log(`代理:      127.0.0.1:${config.proxyPort}`);
       console.log(`Web 界面:  ${paint(process.stdout, `http://127.0.0.1:${config.uiPort}`)}`);
       console.log(`上游代理:  ${config.upstream || '无（直连）'}`);
+      console.log(`监听地址:  ${config.bindLan ? '0.0.0.0（局域网可访问）' : '127.0.0.1（仅本机）'}`);
+      console.log(`仅监控进程: ${config.onlyProcesses && config.onlyProcesses.length ? config.onlyProcesses.join(', ') : '全部'}`);
     } else {
       console.log(`状态:      未在运行${pid ? '（pid 文件残留但界面无响应，可执行 httptap off 清理）' : ''}`);
     }
@@ -331,6 +337,90 @@ if (cmd === 'help' || optTokens.includes('--help') || optTokens.includes('-h') |
     openBrowser(uiUrl);
     console.log(`已在浏览器打开 ${paint(process.stdout, uiUrl)}`);
   });
+} else if (cmd === 'config') {
+  // 直接打开 Web 界面的配置窗口（#settings 让前端自动弹设置面板）
+  probeConfig((config) => {
+    if (!config) {
+      console.error('httptap 未在运行，先执行 httptap on 或 npx httptap 启动');
+      process.exit(1);
+    }
+    const uiUrl = `http://127.0.0.1:${config.uiPort}/#settings`;
+    openBrowser(uiUrl);
+    console.log(`已在浏览器打开配置窗口 ${paint(process.stdout, uiUrl)}`);
+  });
+} else if (cmd === 'restart') {
+  const sysproxy = require('./src/sysproxy');
+  const { readSystemProxy } = require('./src/upstream');
+  const wasTakenOver = !!sysproxy.loadState(STATE_FILE);
+
+  const start = () => {
+    startDaemon((config) => {
+      if (!config) {
+        console.error(`启动失败，查看日志: ${LOG_FILE}`);
+        process.exit(1);
+      }
+      const uiUrl = `http://127.0.0.1:${config.uiPort || uiPort}`;
+      console.error(`httptap 已重启: 代理 127.0.0.1:${config.proxyPort}，界面 ${paint(process.stderr, uiUrl)}（日志 ${LOG_FILE}）`);
+      console.error(`上游代理: ${config.upstream || '无（直连）'}`);
+      // 旧进程退出时的钩子已把系统代理还原并删除状态文件；此刻系统代理就是用户原配置，
+      // 重新接管并以其为串联上游（读到的若是 httptap 自己则跳过，防自指）
+      if (wasTakenOver) {
+        try {
+          const sys = readSystemProxy() || {};
+          const isSelf = (p) => p && (p.host === '127.0.0.1' || p.host === 'localhost') && p.port === config.proxyPort;
+          sysproxy.takeover({
+            stateFile: STATE_FILE,
+            proxyPort: config.proxyPort,
+            upstream: {
+              http: sys.http && !isSelf(sys.http) ? sys.http : null,
+              https: sys.https && !isSelf(sys.https) ? sys.https : null,
+            },
+            exceptions: sys.bypass || [],
+          });
+          console.error('系统代理已重新指向 httptap');
+        } catch (e) {
+          console.error(`重新接管系统代理失败: ${e.message}，可执行 httptap sysproxy on 重试`);
+        }
+      }
+      if (!noOpen) openBrowser(uiUrl);
+    });
+  };
+
+  const pid = readPid();
+  if (!pid) {
+    return probeConfig((config) => {
+      if (config) {
+        console.error('检测到前台运行的 httptap（无后台 pid），请到该终端按 Ctrl+C 后重新启动');
+        process.exit(1);
+      }
+      console.error('httptap 未在运行，直接启动');
+      start();
+    });
+  }
+  try {
+    process.kill(pid);
+  } catch (_) {}
+  // 等旧进程退出（退出钩子会同步还原系统代理），再启动新实例，避免端口冲突
+  const t0 = Date.now();
+  (function waitDead() {
+    let alive = true;
+    try {
+      process.kill(pid, 0);
+    } catch (_) {
+      alive = false;
+    }
+    if (!alive) {
+      try {
+        fs.unlinkSync(PID_FILE);
+      } catch (_) {}
+      return start();
+    }
+    if (Date.now() - t0 > 5000) {
+      console.error('旧进程未及时退出，强制继续启动');
+      return start();
+    }
+    setTimeout(waitDead, 100);
+  })();
 } else if (cmd === 'sysproxy') {
   const action = argv[cmdIndex + 1];
   const sysproxy = require('./src/sysproxy');
@@ -523,64 +613,108 @@ if (cmd === 'help' || optTokens.includes('--help') || optTokens.includes('-h') |
   const { createProcessMap } = require('./src/process-map');
   const sysproxy = require('./src/sysproxy');
 
-  const upstream = createUpstreamResolver({ flag: upstreamFlag, selfPort: proxyPort, stateFile: STATE_FILE });
-  // 进程归属（按连接源端口反查进程名；macOS/Linux 用 lsof，Windows 用 netstat+tasklist）
-  const processMap = createProcessMap(proxyPort);
-  const store = new Store(500);
+  // 端口/绑定配置变更后的自重启：新实例等旧进程退出让出端口再绑（由 HTTPTAP_START_DELAY 控制）
+  const startDelay = Number(process.env.HTTPTAP_START_DELAY || 0);
 
-  // 退出时若系统代理仍指向本实例，自动还原，避免把系统网络留在坏状态
-  const restoreSysproxyOnExit = () => {
-    try {
-      const st = sysproxy.loadState(STATE_FILE);
-      if (st && st.proxyPort === proxyPort) {
-        sysproxy.restore({ stateFile: STATE_FILE });
-        console.log('已还原系统代理设置');
-      }
-    } catch (_) {}
+  const boot = () => {
+    // 配置在启动时读取：Web 界面保存配置后触发的自重启会派生新进程，自然读到新配置
+    const cfg = require('./src/config').load();
+    const bindHost = cfg.bindLan ? '0.0.0.0' : '127.0.0.1';
+    const upstream = createUpstreamResolver({ flag: upstreamFlag, selfPort: proxyPort, stateFile: STATE_FILE });
+    // 进程归属（按连接源端口反查进程名；macOS/Linux 用 lsof，Windows 用 netstat+tasklist）
+    const processMap = createProcessMap(proxyPort);
+    const store = new Store(500);
+    store.setProcessFilter(cfg.onlyProcesses);
+
+    // 退出时若系统代理仍指向本实例，自动还原，避免把系统网络留在坏状态
+    const restoreSysproxyOnExit = () => {
+      try {
+        const st = sysproxy.loadState(STATE_FILE);
+        if (st && st.proxyPort === proxyPort) {
+          sysproxy.restore({ stateFile: STATE_FILE });
+          console.log('已还原系统代理设置');
+        }
+      } catch (_) {}
+    };
+    process.on('SIGINT', () => { restoreSysproxyOnExit(); process.exit(0); });
+    process.on('SIGTERM', () => { restoreSysproxyOnExit(); process.exit(0); });
+
+    // 配置变更（端口/绑定）需要重绑监听：派生新实例（读刚保存的配置文件），本进程退出让出端口
+    const selfRestart = () => {
+      console.log('配置已变更，重启服务以生效…');
+      try {
+        const out = fs.openSync(LOG_FILE, 'a');
+        const args = [__filename, 'serve', '--no-open'];
+        if (upstreamFlag !== undefined) args.push('--upstream', upstreamFlag);
+        const child = spawn(process.execPath, args, {
+          detached: true,
+          stdio: ['ignore', out, out],
+          env: { ...process.env, HTTPTAP_START_DELAY: '800' },
+        });
+        child.unref();
+        fs.writeFileSync(PID_FILE, String(child.pid));
+      } catch (_) {}
+      setTimeout(() => process.exit(0), 300);
+    };
+
+    startProxy({
+      port: proxyPort,
+      host: bindHost,
+      store,
+      sslCaDir: CA_DIR,
+      upstream,
+      processMap,
+      onReady: () => {
+        console.log(`代理已启动:  http://127.0.0.1:${proxyPort}`);
+        console.log(`监听地址:    ${bindHost === '0.0.0.0' ? '0.0.0.0（局域网可访问）' : '127.0.0.1（仅本机）'}`);
+        console.log(`上游代理:    ${upstream.describe()}`);
+        for (const note of upstream.notes) console.log(`  提示: ${note}`);
+        // 端口经配置变更后自重启：系统代理仍指向旧端口，重指到新端口（保留原上游信息）
+        try {
+          const st = sysproxy.loadState(STATE_FILE);
+          if (st && st.proxyPort !== proxyPort && sysproxy.retake({ stateFile: STATE_FILE, proxyPort })) {
+            console.log(`系统代理已重指到新端口 127.0.0.1:${proxyPort}`);
+          }
+        } catch (e) {
+          console.log(`重指系统代理失败: ${e.message}，可执行 httptap sysproxy off 后重新 sysproxy on`);
+        }
+      },
+    });
+
+    startUi({
+      port: uiPort,
+      host: bindHost,
+      store,
+      proxyPort,
+      upstreamDesc: () => upstream.describe(),
+      currentConfig: { proxyPort, uiPort, bindLan: cfg.bindLan },
+      onConfigSaved: selfRestart,
+      onReady: () => {
+        const uiUrl = `http://127.0.0.1:${uiPort}`;
+        console.log(`Web 界面:    ${paint(process.stdout, uiUrl)}`);
+        if (!noOpen) openBrowser(uiUrl);
+        console.log('');
+        console.log('拦截单个终端进程的流量（不影响其他程序）:');
+        console.log('  npx httptap run -- <命令>        # 如 npx httptap run -- curl https://example.com');
+        console.log('');
+        console.log('拦截本机应用（浏览器等，读系统代理的程序，macOS/Windows）:');
+        console.log('  npx httptap sysproxy on        # 系统代理指向 httptap（自动串联到原系统代理）');
+        console.log('  npx httptap sysproxy off       # 还原系统代理');
+        console.log('  npx httptap trust              # 把 CA 写入系统信任库（HTTPS 解密需要）');
+        console.log('');
+        console.log('完整命令与选项: npx httptap --help');
+        console.log('或给整个终端设置代理环境变量:');
+        console.log('  eval "$(npx httptap on)"       # 启动并注入环境变量（zsh 也可用 source <(npx httptap on)）');
+        console.log('  eval "$(npx httptap off)"      # 停止并清除环境变量');
+        console.log('');
+        console.log('HTTPS 抓包需要客户端信任 CA 证书（首次运行自动生成）:');
+        console.log(`  ${CA_FILE}`);
+        console.log('');
+        console.log('按 Ctrl+C 退出');
+      },
+    });
   };
-  process.on('SIGINT', () => { restoreSysproxyOnExit(); process.exit(0); });
-  process.on('SIGTERM', () => { restoreSysproxyOnExit(); process.exit(0); });
 
-  startProxy({
-    port: proxyPort,
-    store,
-    sslCaDir: CA_DIR,
-    upstream,
-    processMap,
-    onReady: () => {
-      console.log(`代理已启动:  http://127.0.0.1:${proxyPort}`);
-      console.log(`上游代理:    ${upstream.describe()}`);
-      for (const note of upstream.notes) console.log(`  提示: ${note}`);
-    },
-  });
-
-  startUi({
-    port: uiPort,
-    store,
-    proxyPort,
-    upstreamDesc: () => upstream.describe(),
-    onReady: () => {
-      const uiUrl = `http://127.0.0.1:${uiPort}`;
-      console.log(`Web 界面:    ${paint(process.stdout, uiUrl)}`);
-      if (!noOpen) openBrowser(uiUrl);
-      console.log('');
-      console.log('拦截单个终端进程的流量（不影响其他程序）:');
-      console.log('  npx httptap run -- <命令>        # 如 npx httptap run -- curl https://example.com');
-      console.log('');
-      console.log('拦截本机应用（浏览器等，读系统代理的程序，macOS/Windows）:');
-      console.log('  npx httptap sysproxy on        # 系统代理指向 httptap（自动串联到原系统代理）');
-      console.log('  npx httptap sysproxy off       # 还原系统代理');
-      console.log('  npx httptap trust              # 把 CA 写入系统信任库（HTTPS 解密需要）');
-      console.log('');
-      console.log('完整命令与选项: npx httptap --help');
-      console.log('或给整个终端设置代理环境变量:');
-      console.log('  eval "$(npx httptap on)"       # 启动并注入环境变量（zsh 也可用 source <(npx httptap on)）');
-      console.log('  eval "$(npx httptap off)"      # 停止并清除环境变量');
-      console.log('');
-      console.log('HTTPS 抓包需要客户端信任 CA 证书（首次运行自动生成）:');
-      console.log(`  ${CA_FILE}`);
-      console.log('');
-      console.log('按 Ctrl+C 退出');
-    },
-  });
+  if (startDelay > 0) setTimeout(boot, startDelay);
+  else boot();
 }

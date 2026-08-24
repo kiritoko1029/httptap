@@ -69,6 +69,11 @@ function makeLsofLookup(proxyPort) {
   };
 }
 
+// lsof 会把 COMMAND 列里的空格等字符转义成 \xNN，还原成真实进程名
+function unescapeLsofName(s) {
+  return s.replace(/\\x([0-9a-fA-F]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
+}
+
 // COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME
 // 例: Google Chrome  1234  user  25u  IPv4 0x..  0t0  TCP 127.0.0.1:51234->127.0.0.1:8888 (ESTABLISHED)
 // COMMAND 可能含空格，用「惰性名称 + 固定列数」的方式解析
@@ -80,7 +85,7 @@ function parseLsof(stdout, proxyPort) {
     const foreignPort = Number(m[6]);
     // 只要客户端侧的行（对端是代理端口）；服务端那行是本进程，跳过
     if (foreignPort !== proxyPort) continue;
-    map.set(Number(m[4]), { pid: Number(m[2]), name: m[1] });
+    map.set(Number(m[4]), { pid: Number(m[2]), name: unescapeLsofName(m[1]) });
   }
   return map;
 }
@@ -121,4 +126,51 @@ function parseNetstat(stdout, proxyPort, names) {
   return map;
 }
 
-module.exports = { createProcessMap, parseLsof, parseTasklist, parseNetstat };
+// ---------- 系统级网络活跃进程（设置面板的「仅监控进程」下拉数据源） ----------
+
+// 返回 [{ name, count }]，按连接数降序、名称升序；排除 httptap 自身
+async function listActiveProcesses() {
+  if (process.platform === 'win32') {
+    const [netstatOut, tasklistOut] = await Promise.all([
+      exec('netstat', ['-ano', '-p', 'tcp']),
+      exec('tasklist', ['/FO', 'CSV', '/NH']),
+    ]);
+    return countByName(parseNetstatAll(netstatOut, parseTasklist(tasklistOut)));
+  }
+  const stdout = await exec('lsof', ['-nP', '+c', '0', '-iTCP', '-sTCP:ESTABLISHED']);
+  return countByName(parseLsofAll(stdout));
+}
+
+// 逐行产出 { pid, name }（所有 ESTABLISHED TCP 连接，不限代理端口）
+function parseLsofAll(stdout) {
+  const out = [];
+  for (const line of String(stdout).split('\n')) {
+    const m = line.match(/^(.*?)\s+(\d+)\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+TCP\s+\S+->\S+\s+\(ESTABLISHED\)/);
+    if (m) out.push({ pid: Number(m[2]), name: unescapeLsofName(m[1]) });
+  }
+  return out;
+}
+
+function parseNetstatAll(stdout, names) {
+  const out = [];
+  for (const line of String(stdout).split('\n')) {
+    const m = line.match(/^\s*TCP\s+\S+:\d+\s+\S+:\d+\s+ESTABLISHED\s+(\d+)/i);
+    if (!m) continue;
+    const pid = Number(m[1]);
+    out.push({ pid, name: names.get(pid) || String(pid) });
+  }
+  return out;
+}
+
+function countByName(rows) {
+  const counts = new Map();
+  for (const r of rows) {
+    if (r.pid === process.pid) continue; // 别把 httptap 自己算进去
+    counts.set(r.name, (counts.get(r.name) || 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count || (a.name < b.name ? -1 : 1));
+}
+
+module.exports = { createProcessMap, parseLsof, parseTasklist, parseNetstat, listActiveProcesses };

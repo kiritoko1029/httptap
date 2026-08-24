@@ -6,7 +6,7 @@ const Proxy = mitm.Proxy || mitm.default || mitm;
 const { MAX_BODY_BYTES } = require('./store');
 const { createAgentCache } = require('./upstream');
 
-function startProxy({ port, store, sslCaDir, upstream, processMap, onReady }) {
+function startProxy({ port, host, store, sslCaDir, upstream, processMap, onReady }) {
   const proxy = new Proxy();
   const agentCache = createAgentCache();
 
@@ -143,9 +143,9 @@ function startProxy({ port, store, sslCaDir, upstream, processMap, onReady }) {
     callback();
   });
 
-  // 绑定 127.0.0.1 而非库的默认 "localhost"：Windows 上 localhost 常解析到 IPv6 ::1，
-  // 而注册表里的系统代理写的是 127.0.0.1（IPv4），浏览器会连接被拒、所有网页打不开
-  proxy.listen({ port, host: '127.0.0.1', sslCaDir, silent: true }, () => {
+  // 默认绑 127.0.0.1（库的默认 "localhost" 在 Windows 上常解析到 IPv6 ::1，
+  // 而注册表系统代理写的是 127.0.0.1，会连接被拒）；配置开启局域网暴露时绑 0.0.0.0
+  proxy.listen({ port, host: host || '127.0.0.1', sslCaDir, silent: true }, () => {
     if (onReady) onReady();
   });
 

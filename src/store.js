@@ -19,6 +19,21 @@ class Store {
     this.entries = [];
     this.listeners = new Set();
     this.nextId = 1;
+    this.processFilter = []; // 「仅监控进程」：非空时 list/推送只保留匹配项
+  }
+
+  // 匹配规则：忽略大小写与 .exe 后缀的子串匹配
+  setProcessFilter(list) {
+    this.processFilter = (list || [])
+      .map((s) => String(s).toLowerCase().replace(/\.exe$/, ''))
+      .filter(Boolean);
+  }
+
+  passesProc(e) {
+    if (!this.processFilter.length) return true;
+    const name = String((e && e.processName) || '').toLowerCase().replace(/\.exe$/, '');
+    if (!name) return false; // 过滤开启时未归属的请求不展示
+    return this.processFilter.some((f) => name.includes(f));
   }
 
   create(meta) {
@@ -61,7 +76,7 @@ class Store {
   }
 
   list() {
-    return this.entries.map((e) => this.summary(e));
+    return this.entries.filter((e) => this.passesProc(e)).map((e) => this.summary(e));
   }
 
   detail(e) {
@@ -83,6 +98,7 @@ class Store {
   }
 
   emit(type, entry) {
+    if (type === 'entry' && !this.passesProc(entry)) return; // 进程过滤不推送
     this.emitRaw(type, this.summary(entry));
   }
 

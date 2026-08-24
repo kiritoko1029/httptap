@@ -186,4 +186,24 @@ function restore(opts) {
   return process.platform === 'win32' ? restoreWin32(opts) : restoreDarwin(opts);
 }
 
-module.exports = { takeover, restore, loadState, listServices };
+// 把已接管的系统代理重指到新的代理端口（只改端口，保留接管前的备份与上游信息）。
+// 用于端口配置变更后的服务自重启——此时系统代理仍指向旧端口。
+function retake({ stateFile, proxyPort }) {
+  const saved = loadState(stateFile);
+  if (!saved) return false;
+  if (saved.proxyPort === proxyPort) return true;
+  if (process.platform === 'win32') {
+    winAdd('ProxyServer', 'REG_SZ', `127.0.0.1:${proxyPort}`);
+    winAdd('ProxyEnable', 'REG_DWORD', '1');
+  } else {
+    for (const svc of Object.keys(saved.services || {})) {
+      run('networksetup', ['-setwebproxy', svc, '127.0.0.1', String(proxyPort)]);
+      run('networksetup', ['-setsecurewebproxy', svc, '127.0.0.1', String(proxyPort)]);
+    }
+  }
+  saved.proxyPort = proxyPort;
+  fs.writeFileSync(stateFile, JSON.stringify(saved, null, 2));
+  return true;
+}
+
+module.exports = { takeover, restore, retake, loadState, listServices };

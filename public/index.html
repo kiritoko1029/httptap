@@ -155,6 +155,59 @@
     white-space: pre-wrap; word-break: break-all;
   }
   #empty { padding: 40px; text-align: center; color: var(--muted); font-size: 14px; }
+  .mask {
+    position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 10;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .modal {
+    width: 400px; max-width: 92vw; background: var(--bg2); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px 18px; box-shadow: 0 8px 30px rgba(0,0,0,.4);
+  }
+  .modal-head {
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 14px; font-weight: 600; margin-bottom: 14px;
+  }
+  .modal-head .x { cursor: pointer; color: var(--muted); padding: 2px 6px; }
+  .modal-head .x:hover { color: var(--fg); }
+  .modal label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 12px; }
+  .modal label .fld {
+    display: block; margin-top: 4px; width: 100%; background: var(--bg);
+    border: 1px solid var(--border); color: var(--fg); padding: 6px 10px;
+    border-radius: 6px; outline: none; font-size: 13px;
+  }
+  .modal label .fld:focus { border-color: var(--accent); }
+  .modal label.ck { display: flex; align-items: center; gap: 8px; color: var(--fg); }
+  .modal .hint { font-size: 12px; color: var(--muted); margin: 2px 0 12px; line-height: 1.6; }
+  .modal-foot { display: flex; align-items: center; gap: 10px; }
+  .modal-foot #cfgMsg { flex: 1; font-size: 12px; color: var(--muted); }
+  .modal-foot #cfgMsg.err { color: var(--c-s5); }
+  .modal-foot #cfgMsg.ok { color: var(--c-get); }
+  .proc-drop { position: relative; margin-bottom: 12px; }
+  .proc-drop-btn {
+    width: 100%; text-align: left; background: var(--bg); border: 1px solid var(--border);
+    color: var(--fg); padding: 6px 10px; border-radius: 6px; font-size: 13px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .proc-drop-btn:focus { border-color: var(--accent); }
+  .proc-panel {
+    position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 20;
+    background: var(--bg2); border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.35); padding: 6px;
+  }
+  .proc-list { max-height: 260px; overflow-y: auto; }
+  .proc-item {
+    display: flex; align-items: center; gap: 8px; padding: 5px 8px;
+    border-radius: 6px; font-size: 13px; cursor: pointer; color: var(--fg);
+  }
+  .proc-item:hover { background: var(--bg3); }
+  .proc-item .cnt { margin-left: auto; color: var(--muted); font-size: 11px; }
+  .proc-empty { color: var(--muted); font-size: 12px; padding: 10px; text-align: center; }
+  .proc-add { display: flex; gap: 6px; padding-top: 6px; margin-top: 4px; border-top: 1px solid var(--border2); }
+  .proc-add input {
+    flex: 1; background: var(--bg); border: 1px solid var(--border); color: var(--fg);
+    padding: 5px 8px; border-radius: 6px; outline: none; font-size: 12px;
+  }
+  .proc-add button { font-size: 12px; padding: 5px 10px; }
 </style>
 </head>
 <body>
@@ -163,6 +216,7 @@
   <input id="filter" placeholder="过滤 URL / 方法 / Host…">
   <button id="clearBtn">清空</button>
   <button id="themeBtn" title="切换主题">切换主题</button>
+  <button id="settingsBtn" title="设置">设置</button>
   <span id="status">连接中…</span>
   <div class="subbar">
     <label>方法 <select id="methodFilter"><option value="">全部</option></select></label>
@@ -199,6 +253,28 @@
   <div id="splitter"></div>
   <div id="detailPane"><div class="placeholder">点击左侧请求查看详情</div></div>
 </main>
+
+<div id="settingsMask" class="mask" style="display:none">
+  <div class="modal">
+    <div class="modal-head">设置<span class="x" id="settingsClose">✕</span></div>
+    <label>代理端口<input id="cfgProxyPort" class="fld" type="number" min="1" max="65535"></label>
+    <label>界面端口<input id="cfgUiPort" class="fld" type="number" min="1" max="65535"></label>
+    <label class="ck"><input id="cfgBindLan" type="checkbox"> 暴露到局域网（其他设备可使用本机代理、查看面板与修改设置）</label>
+    <label style="margin-bottom:4px">仅监控进程</label>
+    <div class="proc-drop" id="procDrop">
+      <button type="button" class="proc-drop-btn" id="procDropBtn">全部进程</button>
+      <div class="proc-panel" id="procPanel" style="display:none">
+        <div class="proc-list" id="procList"></div>
+        <div class="proc-add">
+          <input id="cfgProcCustom" placeholder="手动添加进程名（子串匹配）">
+          <button type="button" id="cfgProcAdd">添加</button>
+        </div>
+      </div>
+    </div>
+    <div class="hint">「仅监控进程」保存即生效；修改端口或局域网开关会重启服务，页面将自动跳转到新地址。</div>
+    <div class="modal-foot"><span id="cfgMsg"></span><button id="cfgSave">保存</button></div>
+  </div>
+</div>
 
 <script>
 const tbody = document.getElementById('tbody');
@@ -740,6 +816,140 @@ function renderDetail() {
 
 document.getElementById('clearBtn').onclick = () => fetch('/api/clear', { method: 'POST' });
 filterInput.addEventListener('input', render);
+
+// ---------- 设置 ----------
+const settingsMask = document.getElementById('settingsMask');
+const cfgMsg = document.getElementById('cfgMsg');
+const closeSettings = () => {
+  settingsMask.style.display = 'none';
+  history.replaceState(null, '', location.pathname + location.search); // 清掉 #settings，避免刷新又弹出
+};
+function openSettings() {
+  fetch('/api/config').then((r) => r.json()).then((c) => {
+    document.getElementById('cfgProxyPort').value = c.proxyPort;
+    document.getElementById('cfgUiPort').value = c.uiPort;
+    document.getElementById('cfgBindLan').checked = !!c.bindLan;
+    selectedProcs = new Set(c.onlyProcesses || []);
+    updateProcBtn();
+    procPanel.style.display = 'none';
+    cfgMsg.textContent = '';
+    cfgMsg.className = '';
+    settingsMask.style.display = 'flex';
+  }).catch(() => {});
+}
+document.getElementById('settingsBtn').onclick = openSettings;
+document.getElementById('settingsClose').onclick = closeSettings;
+settingsMask.onclick = (e) => { if (e.target === settingsMask) closeSettings(); };
+if (location.hash === '#settings') openSettings(); // httptap config 打开方式
+
+// 「仅监控进程」多选下拉：数据源为系统当前网络活跃进程（连接数降序前 10）
+let selectedProcs = new Set();
+let activeProcs = [];
+const procPanel = document.getElementById('procPanel');
+const procDropBtn = document.getElementById('procDropBtn');
+
+function updateProcBtn() {
+  procDropBtn.textContent = selectedProcs.size ? [...selectedProcs].join(', ') : '全部进程';
+}
+
+function isProcSelected(name) {
+  const n = name.toLowerCase();
+  return [...selectedProcs].some((s) => s.toLowerCase() === n);
+}
+
+function renderProcList() {
+  const list = document.getElementById('procList');
+  const activeNames = new Set(activeProcs.map((p) => p.name.toLowerCase()));
+  const rows = [];
+  // 已选但当前不活跃的排在最前，避免已选项凭空消失
+  for (const name of selectedProcs) {
+    if (!activeNames.has(name.toLowerCase())) rows.push({ name, count: 0 });
+  }
+  for (const p of activeProcs) rows.push(p);
+  if (!rows.length) {
+    list.innerHTML = '<div class="proc-empty">当前没有活跃的网络进程</div>';
+    return;
+  }
+  list.innerHTML = rows.map((p) => `
+    <label class="proc-item">
+      <input type="checkbox" data-name="${esc(p.name)}"${isProcSelected(p.name) ? ' checked' : ''}>
+      <span>${esc(p.name)}</span>
+      ${p.count ? `<span class="cnt">${p.count} 连接</span>` : '<span class="cnt">已选 · 当前不活跃</span>'}
+    </label>`).join('');
+  list.querySelectorAll('input[type=checkbox]').forEach((cb) => {
+    cb.onchange = () => {
+      // 先清掉同名的大小写变体，再按勾选状态写入显示名
+      [...selectedProcs].forEach((s) => {
+        if (s.toLowerCase() === cb.dataset.name.toLowerCase()) selectedProcs.delete(s);
+      });
+      if (cb.checked) selectedProcs.add(cb.dataset.name);
+      updateProcBtn();
+    };
+  });
+}
+
+procDropBtn.onclick = () => {
+  if (procPanel.style.display !== 'none') {
+    procPanel.style.display = 'none';
+    return;
+  }
+  procPanel.style.display = 'block';
+  document.getElementById('procList').innerHTML = '<div class="proc-empty">分析中…</div>';
+  fetch('/api/active-processes').then((r) => r.json()).then((d) => {
+    activeProcs = d.processes || [];
+    renderProcList();
+  }).catch(() => { activeProcs = []; renderProcList(); });
+};
+document.addEventListener('click', (e) => {
+  if (!document.getElementById('procDrop').contains(e.target)) procPanel.style.display = 'none';
+});
+document.getElementById('cfgProcAdd').onclick = () => {
+  const inp = document.getElementById('cfgProcCustom');
+  const v = inp.value.trim();
+  if (!v) return;
+  if (!isProcSelected(v)) selectedProcs.add(v);
+  inp.value = '';
+  updateProcBtn();
+  renderProcList();
+};
+
+document.getElementById('cfgSave').onclick = () => {
+  const proxyPort = Number(document.getElementById('cfgProxyPort').value);
+  const uiPort = Number(document.getElementById('cfgUiPort').value);
+  const bindLan = document.getElementById('cfgBindLan').checked;
+  const onlyProcesses = [...selectedProcs];
+  const fail = (t) => { cfgMsg.textContent = t; cfgMsg.className = 'err'; };
+  if (!Number.isInteger(proxyPort) || proxyPort < 1 || proxyPort > 65535) return fail('代理端口必须是 1-65535');
+  if (!Number.isInteger(uiPort) || uiPort < 1 || uiPort > 65535) return fail('界面端口必须是 1-65535');
+  if (proxyPort === uiPort) return fail('两个端口不能相同');
+  fetch('/api/config', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ proxyPort, uiPort, bindLan, onlyProcesses }),
+  }).then((r) => r.json().then((out) => ({ ok: r.ok, out }))).then(({ ok, out }) => {
+    if (!ok) return fail(out.error || '保存失败');
+    if (!out.needsRestart) {
+      cfgMsg.textContent = '已保存';
+      cfgMsg.className = 'ok';
+      setTimeout(() => { closeSettings(); location.reload(); }, 600);
+      return;
+    }
+    // 端口/绑定变化：服务将自重启，轮询新地址，起来后跳过去
+    cfgMsg.textContent = '已保存，服务重启中…';
+    cfgMsg.className = 'ok';
+    const target = `${location.protocol}//${location.hostname}:${out.uiPort}`;
+    const t0 = Date.now();
+    (function poll() {
+      const retry = () => {
+        if (Date.now() - t0 > 15000) fail('重启超时，请手动打开 ' + target);
+        else setTimeout(poll, 500);
+      };
+      fetch(target + '/api/config')
+        .then((r) => { if (r.ok) location.href = target; else retry(); })
+        .catch(retry);
+    })();
+  }).catch(() => fail('网络错误，保存失败'));
+};
 
 const es = new EventSource('/api/stream');
 es.addEventListener('entry', (e) => {
