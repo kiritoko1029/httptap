@@ -1,8 +1,7 @@
 'use strict';
 
-// 兼容导出差异：0.10.x 挂在 .default，1.x 是命名导出 .Proxy
-const mitm = require('http-mitm-proxy');
-const Proxy = mitm.Proxy || mitm.default || mitm;
+// MITM 代理库 vendored 在本地（上游 1.1.0 已停更）：消除 uuid@9/yargs 等陈旧传递依赖
+const { Proxy } = require('./vendor/http-mitm-proxy');
 const { MAX_BODY_BYTES } = require('./store');
 const { createAgentCache } = require('./upstream');
 

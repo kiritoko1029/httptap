@@ -36,11 +36,11 @@
     "node": ">=20"
   },
   "dependencies": {
-    "http-mitm-proxy": "^1.1.0"
-  },
-  "overrides": {
-    "http-mitm-proxy": {
-      "uuid": "^11.0.0"
-    }
+    "async": "^3.2.6",
+    "debug": "^4.4.3",
+    "mkdirp": "^1.0.4",
+    "node-forge": "^1.4.0",
+    "semaphore": "^1.1.0",
+    "ws": "^8.21.3"
   }
 }
