@@ -43,6 +43,24 @@ function arg(name, dflt) {
 const proxyPort = parseInt(arg('proxy-port', '8888'), 10);
 const uiPort = parseInt(arg('ui-port', '8880'), 10);
 const upstreamFlag = arg('upstream', undefined); // 默认自动探测；'none' 表示不串联上游代理
+const noOpen = optTokens.includes('--no-open'); // 启动后不自动打开 Web 界面
+
+// 亮青色加粗输出地址；遵守 NO_COLOR 约定，非 TTY（管道/日志文件）时输出纯文本
+function paint(stream, text) {
+  return stream.isTTY && !process.env.NO_COLOR ? `[1m[36m${text}[0m` : text;
+}
+
+// 用系统默认浏览器打开地址（macOS open / Windows start / Linux xdg-open），失败静默
+function openBrowser(url) {
+  try {
+    const cmd = process.platform === 'darwin' ? 'open'
+      : process.platform === 'win32' ? 'cmd' : 'xdg-open';
+    const args = process.platform === 'win32' ? ['/c', 'start', '', url] : [url];
+    const child = spawn(cmd, args, { detached: true, stdio: 'ignore' });
+    child.on('error', () => {});
+    child.unref();
+  } catch (_) {}
+}
 
 // 第一个非 flag 词不是已知子命令时（如 httptap offf），不要静默起服务，报用法错误
 function findUnknownCommand() {
@@ -79,6 +97,7 @@ function printHelp() {
   --proxy-port N    代理端口（默认 8888）
   --ui-port N       Web 界面端口（默认 8880）
   --upstream X      上游代理 URL 或 none（默认自动探测：环境变量 → 系统代理）
+  --no-open         启动后不自动打开 Web 界面（默认会用系统浏览器打开）
 
 示例:
   httptap run -- curl https://example.com    # 只抓这个 curl 进程
@@ -124,7 +143,8 @@ function fetchConfig(done) {
 function startDaemon(done) {
   fs.mkdirSync(CA_DIR, { recursive: true });
   const out = fs.openSync(LOG_FILE, 'a');
-  const args = [__filename, 'serve', '--proxy-port', String(proxyPort), '--ui-port', String(uiPort)];
+  // 后台 daemon 一律 --no-open：浏览器由父进程在确认就绪后打开，避免重复弹窗
+  const args = [__filename, 'serve', '--proxy-port', String(proxyPort), '--ui-port', String(uiPort), '--no-open'];
   if (upstreamFlag !== undefined) args.push('--upstream', upstreamFlag);
   const child = spawn(process.execPath, args, { detached: true, stdio: ['ignore', out, out] });
   child.unref();
@@ -208,10 +228,13 @@ if (cmd === 'help' || optTokens.includes('--help') || optTokens.includes('-h') |
     if (!started && upstreamFlag !== undefined) {
       console.error('注意: 已有实例在运行，--upstream 参数被忽略（上游代理由运行中的实例决定）');
     }
+    const uiUrl = `http://127.0.0.1:${uiPort}`;
     console.error(started
-      ? `httptap 已后台启动: 代理 127.0.0.1:${proxyPort}，界面 http://127.0.0.1:${uiPort}（日志 ${LOG_FILE}）`
-      : `httptap 已在运行（代理 127.0.0.1:${proxyPort}，界面 http://127.0.0.1:${uiPort}）`);
+      ? `httptap 已后台启动: 代理 127.0.0.1:${proxyPort}，界面 ${paint(process.stderr, uiUrl)}（日志 ${LOG_FILE}）`
+      : `httptap 已在运行（代理 127.0.0.1:${proxyPort}，界面 ${paint(process.stderr, uiUrl)}）`);
     console.error(`上游代理: ${config.upstream || '无（直连）'}`);
+    // on 是明确的生命周期操作，无论新启动还是已在运行都打开界面
+    if (!noOpen) openBrowser(uiUrl);
     if (started) {
       console.error(process.platform === 'win32'
         ? '代理环境变量已输出到 stdout，PowerShell 里执行 httptap on | Invoke-Expression 自动生效'
@@ -293,8 +316,10 @@ if (cmd === 'help' || optTokens.includes('--help') || optTokens.includes('-h') |
           upstream,
           exceptions: sys.bypass || [],
         });
-        void started;
         console.error(`系统代理已指向 httptap（127.0.0.1:${proxyPort}），网络服务: ${services.join(', ')}`);
+        const uiUrl = `http://127.0.0.1:${config.uiPort || uiPort}`;
+        console.error(`Web 界面: ${paint(process.stderr, uiUrl)}`);
+        if (started && !noOpen) openBrowser(uiUrl);
         const up = [];
         if (upstream.http) up.push(`http→${upstream.http.host}:${upstream.http.port}`);
         if (upstream.https) up.push(`https→${upstream.https.host}:${upstream.https.port}`);
@@ -396,7 +421,9 @@ if (cmd === 'help' || optTokens.includes('--help') || optTokens.includes('-h') |
       CURL_CA_BUNDLE: bundle,
       GIT_SSL_CAINFO: bundle,
     };
-    console.error(`[httptap] 仅该子进程的流量经由 127.0.0.1:${proxyPort}，在 http://127.0.0.1:${config.uiPort || uiPort} 查看（上游代理: ${config.upstream || '无'}）`);
+    console.error(`[httptap] 仅该子进程的流量经由 127.0.0.1:${proxyPort}，在 ${paint(process.stderr, `http://127.0.0.1:${config.uiPort || uiPort}`)} 查看（上游代理: ${config.upstream || '无'}）`);
+    // run 只在「新拉起服务」时打开界面，复用运行中实例时不打断当前工作
+    if (started && !noOpen) openBrowser(`http://127.0.0.1:${config.uiPort || uiPort}`);
     if (started) {
       console.error(`[httptap] 代理已转为后台常驻，用完可执行 httptap off 停止（日志 ${LOG_FILE}）`);
     }
@@ -469,7 +496,9 @@ if (cmd === 'help' || optTokens.includes('--help') || optTokens.includes('-h') |
     proxyPort,
     upstreamDesc: () => upstream.describe(),
     onReady: () => {
-      console.log(`Web 界面:    http://127.0.0.1:${uiPort}`);
+      const uiUrl = `http://127.0.0.1:${uiPort}`;
+      console.log(`Web 界面:    ${paint(process.stdout, uiUrl)}`);
+      if (!noOpen) openBrowser(uiUrl);
       console.log('');
       console.log('拦截单个终端进程的流量（不影响其他程序）:');
       console.log('  npx httptap run -- <命令>        # 如 npx httptap run -- curl https://example.com');

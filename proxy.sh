@@ -48,7 +48,7 @@ cmd_on() {
     echo "提示: 用 source 运行可同时设置代理环境变量:  source ./proxy.sh on"
   fi
 
-  open "http://127.0.0.1:$UI_PORT" 2>/dev/null || true
+  # Web 界面由 index.js 在就绪后自动打开，这里不再重复 open
 }
 
 cmd_off() {
