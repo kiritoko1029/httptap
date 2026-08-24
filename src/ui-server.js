@@ -70,7 +70,8 @@ function startUi({ port, store, proxyPort, upstreamDesc, onReady }) {
     sendJson(res, 404, { error: 'not found' });
   });
 
-  server.listen(port, () => {
+  // 只听 loopback：本地调试工具不应把界面暴露给局域网
+  server.listen(port, '127.0.0.1', () => {
     if (onReady) onReady();
   });
 

@@ -141,7 +141,9 @@ function startProxy({ port, store, sslCaDir, upstream, processMap, onReady }) {
     callback();
   });
 
-  proxy.listen({ port, sslCaDir, silent: true }, () => {
+  // 绑定 127.0.0.1 而非库的默认 "localhost"：Windows 上 localhost 常解析到 IPv6 ::1，
+  // 而注册表里的系统代理写的是 127.0.0.1（IPv4），浏览器会连接被拒、所有网页打不开
+  proxy.listen({ port, host: '127.0.0.1', sslCaDir, silent: true }, () => {
     if (onReady) onReady();
   });
 
