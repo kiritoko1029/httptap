@@ -73,11 +73,59 @@ function parseScutil(text) {
   return out;
 }
 
+// 解析 Windows 注册表 Internet Settings（reg query 的全量输出）
+// ProxyServer 两种形态：单一 "host:port"（所有协议共用），或分协议 "http=h:p;https=h:p;socks=h:p"
+function parseWindowsProxy(text) {
+  const vals = {};
+  for (const line of String(text).split('\n')) {
+    const m = line.match(/^\s+(\w+)\s+REG_\w+\s*(.*)$/);
+    if (m) vals[m[1].toLowerCase()] = m[2].trim();
+  }
+  const out = { bypass: [] };
+  if (!/^0x1$/i.test(vals.proxyenable || '')) return out; // 系统代理未启用
+  const parseHP = (s) => {
+    const m = String(s).trim().match(/^([^:]+):(\d+)$/);
+    return m ? { host: m[1], port: Number(m[2]), authHeader: null } : null;
+  };
+  const server = vals.proxyserver || '';
+  if (server.includes('=')) {
+    for (const part of server.split(';')) {
+      const eq = part.indexOf('=');
+      if (eq === -1) continue;
+      const proto = part.slice(0, eq).trim().toLowerCase();
+      const p = parseHP(part.slice(eq + 1));
+      if (!p) continue;
+      if (proto === 'http') out.http = p;
+      else if (proto === 'https') out.https = p;
+      else if (proto === 'socks' || proto === 'socks5') out.socks = p;
+    }
+  } else {
+    const p = parseHP(server);
+    if (p) {
+      out.http = p;
+      out.https = { host: p.host, port: p.port, authHeader: null };
+    }
+  }
+  if (vals.proxyoverride) {
+    out.bypass = vals.proxyoverride.split(';').map((s) => s.trim()).filter(Boolean);
+  }
+  if (vals.autoconfigurl) out.pac = vals.autoconfigurl;
+  return out;
+}
+
 function readSystemProxy() {
-  if (process.platform !== 'darwin') return null;
   try {
-    const text = execFileSync('scutil', ['--proxy'], { encoding: 'utf8', timeout: 3000 });
-    return parseScutil(text);
+    if (process.platform === 'darwin') {
+      const text = execFileSync('scutil', ['--proxy'], { encoding: 'utf8', timeout: 3000 });
+      return parseScutil(text);
+    }
+    if (process.platform === 'win32') {
+      const text = execFileSync('reg', [
+        'query', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings',
+      ], { encoding: 'utf8', timeout: 3000 });
+      return parseWindowsProxy(text);
+    }
+    return null;
   } catch (_) {
     return null;
   }
@@ -106,17 +154,22 @@ function ipv4InCidr(ip, cidr) {
   return (a & mask) === (b & mask);
 }
 
-// 命中绕过列表则直连。支持：*、*.suffix、.suffix、plain(含子域)、IPv4 CIDR、<local>
+// 命中绕过列表则直连。支持：*、含 * 的通配（*.suffix、192.168.* 等）、.suffix、plain(含子域)、IPv4 CIDR、<local>
 function shouldBypass(host, bypassList) {
   const h = String(host || '').toLowerCase().replace(/^\[|\]$/g, '');
   if (!h) return false;
+  const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   for (const raw of bypassList || []) {
     const e = String(raw).trim().toLowerCase();
     if (!e) continue;
     if (e === '*') return true;
     if (e === '<local>') { if (!h.includes('.')) return true; continue; }
     if (e.includes('/')) { if (ipv4InCidr(h, e)) return true; continue; }
-    if (e.startsWith('*.')) { if (h === e.slice(2) || h.endsWith(e.slice(1))) return true; continue; }
+    if (e.includes('*')) {
+      // 通用通配：* 匹配任意字符（Windows 绕过列表常用 10.*、192.168.* 这类写法）
+      if (new RegExp('^' + e.split('*').map(escRe).join('.*') + '$').test(h)) return true;
+      continue;
+    }
     if (e.startsWith('.')) { if (h === e.slice(1) || h.endsWith(e)) return true; continue; }
     if (h === e || h.endsWith('.' + e)) return true;
   }
@@ -355,6 +408,7 @@ module.exports = {
   createAgentCache,
   parseProxyUrl,
   parseScutil,
+  parseWindowsProxy,
   readSystemProxy,
   shouldBypass,
 };

@@ -17,7 +17,7 @@ const LOG_FILE = path.join(CA_DIR, 'httptap.log');
 const STATE_FILE = path.join(CA_DIR, 'sysproxy-state.json'); // 系统代理接管状态（见 src/sysproxy.js）
 const SYSTEM_CA_BUNDLE = '/etc/ssl/cert.pem'; // macOS 系统根证书（LibreSSL bundle）
 
-const COMMANDS = ['on', 'off', 'run', 'serve', 'sysproxy', 'trust'];
+const COMMANDS = ['on', 'off', 'run', 'serve', 'sysproxy', 'trust', 'help'];
 
 // 第一个出现的子命令把参数切成两段；run 之后的内容全部视为子进程命令，不解析其中的参数
 const argv = process.argv.slice(2);
@@ -43,6 +43,50 @@ function arg(name, dflt) {
 const proxyPort = parseInt(arg('proxy-port', '8888'), 10);
 const uiPort = parseInt(arg('ui-port', '8880'), 10);
 const upstreamFlag = arg('upstream', undefined); // 默认自动探测；'none' 表示不串联上游代理
+
+// 第一个非 flag 词不是已知子命令时（如 httptap offf），不要静默起服务，报用法错误
+function findUnknownCommand() {
+  for (let i = 0; i < argv.length; i++) {
+    const t = argv[i];
+    if (COMMANDS.includes(t)) return null; // 从这里开始属于子命令及其参数
+    if (t.startsWith('--')) {
+      if (argv[i + 1] && !argv[i + 1].startsWith('--') && !COMMANDS.includes(argv[i + 1])) i++; // 跳过 flag 的值
+      continue;
+    }
+    return t;
+  }
+  return null;
+}
+
+function printHelp() {
+  const win = process.platform === 'win32';
+  const onHint = win
+    ? 'PowerShell 里用 httptap on | Invoke-Expression 自动生效'
+    : 'eval "$(httptap on)" 自动生效（zsh 也可用 source <(httptap on)）';
+  console.log(`httptap — HTTP/HTTPS 抓包工具（MITM 代理 + Web 界面）
+
+用法:
+  httptap [选项]                     前台运行代理 + Web 界面（同 serve）
+  httptap [选项] on                  后台启动并输出代理环境变量（${onHint}）
+  httptap off                        停止后台服务（系统代理接管中时会一并还原）
+  httptap [选项] run [--] <命令...>  只拦截指定进程的流量
+  httptap [选项] sysproxy on         系统代理指向 httptap（拦截浏览器 / GUI 应用）
+  httptap sysproxy off | status      还原系统代理 / 查看接管状态
+  httptap trust                      把 CA 写入系统信任库（HTTPS 解密需要）
+  httptap help                       显示本帮助（也可用 --help / -h）
+
+选项（放在子命令之前）:
+  --proxy-port N    代理端口（默认 8888）
+  --ui-port N       Web 界面端口（默认 8880）
+  --upstream X      上游代理 URL 或 none（默认自动探测：环境变量 → 系统代理）
+
+示例:
+  httptap run -- curl https://example.com    # 只抓这个 curl 进程
+  httptap run -- npm install                 # 只抓这次 npm
+  httptap sysproxy on                        # 抓浏览器 / 桌面应用（macOS、Windows）
+
+文档: https://github.com/kiritoko1029/httptap#readme`);
+}
 
 function readPid() {
   try {
@@ -119,15 +163,39 @@ function ensureCombinedCaBundle() {
   }
 }
 
-// 输出可被 source 的 export 行（stdout 只放 shell，提示信息走 stderr）
+// 输出可被 shell 执行的代理设置行（stdout 只放 shell，提示信息走 stderr）
 function printExports() {
+  if (process.platform === 'win32') {
+    // PowerShell：httptap on | Invoke-Expression
+    console.log(`$env:http_proxy="http://127.0.0.1:${proxyPort}"`);
+    console.log(`$env:https_proxy="http://127.0.0.1:${proxyPort}"`);
+    console.log('$env:no_proxy="127.0.0.1,localhost"');
+    console.log(`$env:NODE_EXTRA_CA_CERTS="${CA_FILE}"`);
+    return;
+  }
   console.log(`export http_proxy=http://127.0.0.1:${proxyPort}`);
   console.log(`export https_proxy=http://127.0.0.1:${proxyPort}`);
   console.log('export no_proxy=127.0.0.1,localhost');
   console.log(`export NODE_EXTRA_CA_CERTS=${CA_FILE}`);
 }
 
-if (cmd === 'on') {
+// off 时输出清除环境变量的 shell 行
+function printUnsets() {
+  if (process.platform === 'win32') {
+    console.log('Remove-Item Env:http_proxy,Env:https_proxy,Env:HTTP_PROXY,Env:HTTPS_PROXY,Env:no_proxy,Env:NO_PROXY,Env:NODE_EXTRA_CA_CERTS -ErrorAction SilentlyContinue');
+    return;
+  }
+  console.log('unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY no_proxy NO_PROXY NODE_EXTRA_CA_CERTS');
+}
+
+if (cmd === 'help' || optTokens.includes('--help') || optTokens.includes('-h') ||
+  (cmd === 'run' && ['--help', '-h'].includes(childArgs[0]))) {
+  printHelp();
+} else if (!cmd && findUnknownCommand()) {
+  console.error(`未知命令: ${findUnknownCommand()}\n`);
+  printHelp();
+  process.exit(1);
+} else if (cmd === 'on') {
   ensureRunning((err, config, started) => {
     if (err) {
       console.error(err.message);
@@ -145,7 +213,9 @@ if (cmd === 'on') {
       : `httptap 已在运行（代理 127.0.0.1:${proxyPort}，界面 http://127.0.0.1:${uiPort}）`);
     console.error(`上游代理: ${config.upstream || '无（直连）'}`);
     if (started) {
-      console.error('代理环境变量已输出到 stdout，可用 eval "$(npx httptap on)" 或 source <(npx httptap on) 自动生效');
+      console.error(process.platform === 'win32'
+        ? '代理环境变量已输出到 stdout，PowerShell 里执行 httptap on | Invoke-Expression 自动生效'
+        : '代理环境变量已输出到 stdout，可用 eval "$(npx httptap on)" 或 source <(npx httptap on) 自动生效');
     }
     printExports();
     process.exitCode = 0; // 不用 process.exit，避免管道场景下 stdout 被截断
@@ -173,7 +243,7 @@ if (cmd === 'on') {
       console.error(`还原系统代理失败: ${e.message}，可执行 httptap sysproxy off 重试`);
     }
   }
-  console.log('unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY no_proxy NO_PROXY NODE_EXTRA_CA_CERTS');
+  printUnsets();
 } else if (cmd === 'sysproxy') {
   const action = argv[cmdIndex + 1];
   const sysproxy = require('./src/sysproxy');
@@ -193,8 +263,8 @@ if (cmd === 'on') {
       console.log(`httptap 已接管系统代理 → 127.0.0.1:${st.proxyPort}，上游: ${up.join('，') || '无（直连）'}，接管于 ${new Date(st.createdAt).toLocaleString()}`);
     }
   } else if (action === 'on') {
-    if (process.platform !== 'darwin') {
-      console.error('sysproxy 目前仅支持 macOS');
+    if (!['darwin', 'win32'].includes(process.platform)) {
+      console.error('sysproxy 目前支持 macOS 和 Windows');
       process.exit(1);
     }
     if (sysproxy.loadState(STATE_FILE)) {
@@ -229,7 +299,10 @@ if (cmd === 'on') {
         if (upstream.http) up.push(`http→${upstream.http.host}:${upstream.http.port}`);
         if (upstream.https) up.push(`https→${upstream.https.host}:${upstream.https.port}`);
         console.error(`上游代理: ${up.join('，') || '无（直连）'}；浏览器等读系统代理的应用流量现在会经过 httptap`);
-        console.error('HTTPS 解密需要应用信任 httptap CA，可执行 httptap trust 写入系统钥匙串（需要登录密码）');
+        if (process.platform === 'win32') {
+          console.error('注意: Windows 上已运行的应用可能要重启或刷新后才会使用新的代理设置');
+        }
+        console.error('HTTPS 解密需要应用信任 httptap CA，可执行 httptap trust 写入系统信任库');
         console.error('还原: httptap sysproxy off（或 httptap off，会一并还原）');
       } catch (e) {
         console.error(e.message);
@@ -244,28 +317,42 @@ if (cmd === 'on') {
     process.exit(1);
   }
 } else if (cmd === 'trust') {
-  // 把 CA 写入 macOS 系统钥匙串，浏览器等读系统信任库的应用才能解密 HTTPS
+  // 把 CA 写入系统信任库，浏览器等读系统信任库的应用才能解密 HTTPS
   if (!fs.existsSync(CA_FILE)) {
     console.error('CA 证书尚未生成，请先运行一次 httptap（npx httptap）再执行 trust');
     process.exit(1);
   }
-  if (process.platform !== 'darwin') {
+  if (process.platform === 'win32') {
+    console.error(`即将把 httptap CA 写入当前用户的「受信任的根证书」存储（可能弹出安全警告需确认）: ${CA_FILE}`);
+    const child = spawn('certutil', ['-user', '-addstore', 'Root', CA_FILE], { stdio: 'inherit' });
+    child.on('error', (e) => {
+      console.error(`执行失败: ${e.message}`);
+      process.exit(1);
+    });
+    child.on('exit', (code) => {
+      console.error(code === 0
+        ? 'CA 已写入当前用户根证书存储，浏览器/系统应用现在可以解密 HTTPS 了'
+        : `写入失败（exit ${code}），也可手动双击 ${CA_FILE} 安装到「受信任的根证书颁发机构」`);
+      process.exit(code == null ? 1 : code);
+    });
+  } else if (process.platform === 'darwin') {
+    console.error(`即将把 httptap CA 写入系统钥匙串信任（sudo 需要登录密码）: ${CA_FILE}`);
+    const child = spawn('sudo', [
+      'security', 'add-trusted-cert', '-d', '-r', 'trustRoot',
+      '-k', '/Library/Keychains/System.keychain', CA_FILE,
+    ], { stdio: 'inherit' });
+    child.on('error', (e) => {
+      console.error(`执行失败: ${e.message}`);
+      process.exit(1);
+    });
+    child.on('exit', (code) => {
+      console.error(code === 0 ? 'CA 已加入系统钥匙串信任，浏览器/系统应用现在可以解密 HTTPS 了' : `写入失败（exit ${code}）`);
+      process.exit(code == null ? 1 : code);
+    });
+  } else {
     console.error(`请手动信任 CA 证书: ${CA_FILE}`);
     process.exit(1);
   }
-  console.error(`即将把 httptap CA 写入系统钥匙串信任（sudo 需要登录密码）: ${CA_FILE}`);
-  const child = spawn('sudo', [
-    'security', 'add-trusted-cert', '-d', '-r', 'trustRoot',
-    '-k', '/Library/Keychains/System.keychain', CA_FILE,
-  ], { stdio: 'inherit' });
-  child.on('error', (e) => {
-    console.error(`执行失败: ${e.message}`);
-    process.exit(1);
-  });
-  child.on('exit', (code) => {
-    console.error(code === 0 ? 'CA 已加入系统钥匙串信任，浏览器/系统应用现在可以解密 HTTPS 了' : `写入失败（exit ${code}）`);
-    process.exit(code == null ? 1 : code);
-  });
 } else if (cmd === 'run') {
   const runArgs = childArgs[0] === '--' ? childArgs.slice(1) : childArgs;
   if (!runArgs.length) {
@@ -313,7 +400,14 @@ if (cmd === 'on') {
     if (started) {
       console.error(`[httptap] 代理已转为后台常驻，用完可执行 httptap off 停止（日志 ${LOG_FILE}）`);
     }
-    const child = spawn(runArgs[0], runArgs.slice(1), { env, stdio: 'inherit' });
+    let child;
+    if (process.platform === 'win32') {
+      // Windows 上 npm 等命令是 .cmd，必须经 cmd.exe 启动；对含特殊字符的参数做引号转义
+      const quote = (s) => (/[\s"&|<>^]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s);
+      child = spawn(runArgs.map(quote).join(' '), { env, stdio: 'inherit', shell: true });
+    } else {
+      child = spawn(runArgs[0], runArgs.slice(1), { env, stdio: 'inherit' });
+    }
     child.on('error', (e) => {
       console.error(`[httptap] 启动子进程失败: ${e.message}`);
       process.exit(1);
@@ -339,10 +433,8 @@ if (cmd === 'on') {
   const sysproxy = require('./src/sysproxy');
 
   const upstream = createUpstreamResolver({ flag: upstreamFlag, selfPort: proxyPort, stateFile: STATE_FILE });
-  // 进程归属（按连接源端口反查进程名），macOS / Linux 均有 lsof
-  const processMap = (process.platform === 'darwin' || process.platform === 'linux')
-    ? createProcessMap(proxyPort)
-    : null;
+  // 进程归属（按连接源端口反查进程名；macOS/Linux 用 lsof，Windows 用 netstat+tasklist）
+  const processMap = createProcessMap(proxyPort);
   const store = new Store(500);
 
   // 退出时若系统代理仍指向本实例，自动还原，避免把系统网络留在坏状态
@@ -382,11 +474,12 @@ if (cmd === 'on') {
       console.log('拦截单个终端进程的流量（不影响其他程序）:');
       console.log('  npx httptap run -- <命令>        # 如 npx httptap run -- curl https://example.com');
       console.log('');
-      console.log('拦截本机应用（浏览器等，读系统代理的程序）:');
+      console.log('拦截本机应用（浏览器等，读系统代理的程序，macOS/Windows）:');
       console.log('  npx httptap sysproxy on        # 系统代理指向 httptap（自动串联到原系统代理）');
       console.log('  npx httptap sysproxy off       # 还原系统代理');
-      console.log('  npx httptap trust              # 把 CA 写入系统钥匙串（HTTPS 解密需要）');
+      console.log('  npx httptap trust              # 把 CA 写入系统信任库（HTTPS 解密需要）');
       console.log('');
+      console.log('完整命令与选项: npx httptap --help');
       console.log('或给整个终端设置代理环境变量:');
       console.log('  eval "$(npx httptap on)"       # 启动并注入环境变量（zsh 也可用 source <(npx httptap on)）');
       console.log('  eval "$(npx httptap off)"      # 停止并清除环境变量');

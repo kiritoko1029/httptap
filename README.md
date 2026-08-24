@@ -20,6 +20,7 @@
 
 ```bash
 npx httptap          # 前台运行：代理端口 8888，Web 界面端口 8880，Ctrl+C 退出
+npx httptap --help   # 查看完整命令与选项
 ```
 
 后台运行并自动注入代理环境变量（当前终端即刻可用）：
@@ -47,12 +48,12 @@ npm start
 
 ## 使用
 
-### 拦截本机应用（浏览器 / GUI 应用，macOS）
+### 拦截本机应用（浏览器 / GUI 应用，macOS / Windows）
 
-浏览器等 GUI 应用读的是 macOS 系统代理而非环境变量，用 `sysproxy` 一键接管：
+浏览器等 GUI 应用读的是系统代理而非环境变量，用 `sysproxy` 一键接管：
 
 ```bash
-npx httptap trust           # 首次：把 CA 写入系统钥匙串（HTTPS 解密需要，sudo 密码）
+npx httptap trust           # 首次：CA 写入系统信任库（HTTPS 解密需要，macOS 要 sudo 密码，Windows 可能弹安全警告）
 npx httptap sysproxy on     # 系统 HTTP/HTTPS 代理指向 httptap，自动串联到原系统代理
 npx httptap sysproxy status # 查看接管状态
 npx httptap sysproxy off    # 还原接管前的系统代理设置
@@ -66,7 +67,7 @@ npx httptap sysproxy off    # 还原接管前的系统代理设置
 - 应用流量链路为 `应用 → httptap → 原系统代理 → 目标`，原有代理规则（含绕过列表）继续生效
 - 只对「读系统代理」的应用有效（覆盖浏览器和绝大多数桌面应用）；完全无视系统代理、直连硬连的程序抓不到
 - 对证书做了固定（pinning）的应用无法解密其 HTTPS 内容（这是 MITM 抓包的固有边界）；Firefox 使用独立 CA 库，需在其设置里单独信任 `~/.httptap/certs/ca.pem`
-- `sysproxy on` 需要修改网络设置，部分环境下会弹系统授权框
+- macOS 上接管通过网络设置生效；Windows 上通过注册表（HKCU，无需管理员）生效，但已运行的应用可能要重启或刷新后才会使用新设置
 
 ### 拦截单个进程（httptap run，终端命令）
 
@@ -153,6 +154,20 @@ unset http_proxy https_proxy no_proxy NODE_EXTRA_CA_CERTS
 - **限制**：上游仅支持 HTTP 代理；系统代理若只配了 SOCKS 或 PAC 自动配置，对应目标会直连并在启动日志里提示
 
 启动时会在日志里打印实际生效的上游（如 `上游代理: http→127.0.0.1:7890，https→127.0.0.1:7890（来源: env）`），也可通过 `GET /api/config` 查看。
+
+## Windows 支持
+
+核心功能跨平台可用（`run`、上游串联、Web 界面、进程归属），平台差异如下：
+
+| 能力 | macOS / Linux | Windows |
+| --- | --- | --- |
+| 系统代理探测 | `scutil --proxy` | 注册表 `HKCU\...\Internet Settings` |
+| 系统代理接管（sysproxy） | `networksetup` | 注册表改写（HKCU，无需管理员）；已运行的应用可能要重启后才感知 |
+| 进程归属 | `lsof` | `netstat -ano` + `tasklist` |
+| CA 信任（trust） | 系统钥匙串（sudo） | 当前用户根证书存储（certutil，可能弹安全警告） |
+| 环境变量注入（on/off） | `eval "$(httptap on)"`（bash/zsh） | PowerShell：`httptap on \| Invoke-Expression` |
+
+Windows 下 `run` 通过 cmd.exe 启动子进程（兼容 npm 这类 .cmd 命令）；绕过列表支持 Windows 风格的 `127.*`、`10.*` 通配写法。
 
 ## API
 
