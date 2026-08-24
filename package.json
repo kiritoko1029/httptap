@@ -1,6 +1,6 @@
 {
   "name": "httptap",
-  "version": "1.0.3",
+  "version": "1.1.0",
   "description": "拦截并监控终端 HTTP/HTTPS 网络请求的工具（MITM 代理 + Web 界面）",
   "main": "index.js",
   "bin": {
