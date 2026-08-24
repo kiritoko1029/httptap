@@ -15,7 +15,7 @@ function sendJson(res, status, data) {
   res.end(body);
 }
 
-function startUi({ port, store, proxyPort, onReady }) {
+function startUi({ port, store, proxyPort, upstreamDesc, onReady }) {
   const server = http.createServer((req, res) => {
     const u = new URL(req.url, 'http://localhost');
 
@@ -63,7 +63,8 @@ function startUi({ port, store, proxyPort, onReady }) {
     }
 
     if (u.pathname === '/api/config') {
-      return sendJson(res, 200, { proxyPort });
+      const desc = typeof upstreamDesc === 'function' ? upstreamDesc() : upstreamDesc;
+      return sendJson(res, 200, { proxyPort, uiPort: port, upstream: desc || null });
     }
 
     sendJson(res, 404, { error: 'not found' });

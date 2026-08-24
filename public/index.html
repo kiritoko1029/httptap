@@ -166,6 +166,7 @@
   <span id="status">连接中…</span>
   <div class="subbar">
     <label>方法 <select id="methodFilter"><option value="">全部</option></select></label>
+    <label>进程 <select id="procFilter"><option value="">全部</option></select></label>
     <label>状态 <select id="statusFilter">
       <option value="">全部</option>
       <option value="2">2xx</option>
@@ -207,6 +208,7 @@ const detailPane = document.getElementById('detailPane');
 const filterInput = document.getElementById('filter');
 const statusEl = document.getElementById('status');
 const methodFilter = document.getElementById('methodFilter');
+const procFilter = document.getElementById('procFilter');
 const statusFilter = document.getElementById('statusFilter');
 const durFilter = document.getElementById('durFilter');
 const timeFilter = document.getElementById('timeFilter');
@@ -229,7 +231,7 @@ let sort = { key: 'startedAt', dir: 'desc' };
 try { Object.assign(sort, JSON.parse(localStorage.getItem('hi-sort') || '{}')); } catch (_) {}
 
 const COLUMNS = [
-  ['method', '方法'], ['status', '状态'], ['url', 'URL'],
+  ['method', '方法'], ['processName', '进程'], ['status', '状态'], ['url', 'URL'],
   ['resSize', '大小'], ['durationMs', '耗时'], ['startedAt', '时间'],
 ];
 
@@ -332,6 +334,7 @@ splitter.addEventListener('pointerdown', (e) => {
 // ---------- 筛选 ----------
 function passesFilters(s) {
   if (methodFilter.value && s.method !== methodFilter.value) return false;
+  if (procFilter.value && (s.processName || '') !== procFilter.value) return false;
   const sf = statusFilter.value;
   if (sf === 'err') { if (!s.error) return false; }
   else if (sf === 'pending') { if (s.error || s.status) return false; }
@@ -348,7 +351,8 @@ function matches(s, q) {
     q = q.toLowerCase();
     if (!(s.url.toLowerCase().includes(q) ||
       s.method.toLowerCase().includes(q) ||
-      (s.host || '').toLowerCase().includes(q))) return false;
+      (s.host || '').toLowerCase().includes(q) ||
+      (s.processName || '').toLowerCase().includes(q))) return false;
   }
   return passesFilters(s);
 }
@@ -365,11 +369,24 @@ function refreshMethodOptions() {
   }
 }
 
-[methodFilter, statusFilter, durFilter, timeFilter].forEach((el) =>
+function refreshProcOptions() {
+  const cur = procFilter.value;
+  const procs = [...new Set(all.map((s) => s.processName).filter(Boolean))].sort();
+  const html = '<option value="">全部</option>' +
+    procs.map((p) => `<option value="${esc(p)}">${esc(p)}</option>`).join('');
+  if (procFilter.dataset.opts !== html) {
+    procFilter.innerHTML = html;
+    procFilter.dataset.opts = html;
+    procFilter.value = cur;
+  }
+}
+
+[methodFilter, procFilter, statusFilter, durFilter, timeFilter].forEach((el) =>
   el.addEventListener('input', render));
 document.getElementById('resetFilter').onclick = () => {
   filterInput.value = '';
   methodFilter.value = '';
+  procFilter.value = '';
   statusFilter.value = '';
   durFilter.value = '';
   timeFilter.value = '';
@@ -417,6 +434,7 @@ function sortVal(s, key) {
 // ---------- 列表渲染（按根域名分组） ----------
 function render() {
   refreshMethodOptions();
+  refreshProcOptions();
   const q = filterInput.value.trim();
   const rows = all.filter((s) => matches(s, q));
   const mul = sort.dir === 'asc' ? 1 : -1;
@@ -444,7 +462,7 @@ function render() {
     const isCollapsed = collapsed.has(domain);
     const isPinned = pinned.has(domain);
     html += `<tr class="group${isPinned ? ' pinned' : ''}" data-domain="${esc(domain)}">
-      <td colspan="6"><span class="caret">${isCollapsed ? '▸' : '▾'}</span>${esc(domain)}<span class="count">${list.length} 条</span><span class="pin-btn">${isPinned ? '取消置顶' : '置顶'}</span></td>
+      <td colspan="7"><span class="caret">${isCollapsed ? '▸' : '▾'}</span>${esc(domain)}<span class="count">${list.length} 条</span><span class="pin-btn">${isPinned ? '取消置顶' : '置顶'}</span></td>
     </tr>`;
     if (isCollapsed) continue;
     html += list.map((s) => {
@@ -452,6 +470,7 @@ function render() {
       const statusTxt = s.error ? 'ERR' : (s.status || '…');
       return `<tr data-id="${s.id}" class="${s.id === selectedId ? 'selected' : ''}">
         <td class="m ${esc(s.method)}">${esc(s.method)}</td>
+        <td class="muted">${esc(s.processName || '-')}</td>
         <td class="${statusCls}">${esc(statusTxt)}</td>
         <td title="${esc(s.url)}">${esc(s.url)}</td>
         <td class="muted">${fmtSize(s.resSize)}</td>

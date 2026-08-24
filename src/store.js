@@ -55,6 +55,8 @@ class Store {
       resSize: e.resSize || 0,
       durationMs: e.durationMs != null ? e.durationMs : null,
       startedAt: e.startedAt,
+      processPid: e.processPid || null,
+      processName: e.processName || null,
     };
   }
 
