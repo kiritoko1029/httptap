@@ -17,6 +17,9 @@ function isTextualContentType(ct) {
 
 function encodeBody(buf, headers) {
   if (!buf || buf.length === 0) return null;
+  // 仍是压缩字节（体被截断无法解压 / 不支持的编码）时按二进制处理——压缩流当文本显示必为乱码
+  const ce = String((headers && headers['content-encoding']) || '').toLowerCase().trim();
+  if (ce && ce !== 'identity') return { encoding: 'base64', data: buf.toString('base64') };
   if (isTextualContentType((headers && headers['content-type']) || '')) {
     return { encoding: 'utf8', data: buf.toString('utf8') };
   }
@@ -99,6 +102,8 @@ class Store {
       resBody: encodeBody(e.resBody, e.resHeaders),
       reqBodyTruncated: !!e.reqBodyTruncated,
       resBodyTruncated: !!e.resBodyTruncated,
+      reqBodyDecoded: e.reqBodyDecoded || null,
+      resBodyDecoded: e.resBodyDecoded || null,
     });
   }
 

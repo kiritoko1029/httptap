@@ -1,9 +1,47 @@
 'use strict';
 
+const zlib = require('zlib');
 // MITM 代理库 vendored 在本地（上游 1.1.0 已停更）：消除 uuid@9/yargs 等陈旧传递依赖
 const { Proxy } = require('./vendor/http-mitm-proxy');
 const { MAX_BODY_BYTES } = require('./store');
 const { createAgentCache } = require('./upstream');
+
+// 按 content-encoding 解压；失败（截断的流、未知编码、数据损坏）返回 null
+function tryDecodeBody(buf, ce) {
+  try {
+    switch (ce) {
+      case 'br': return zlib.brotliDecompressSync(buf);
+      case 'gzip': return zlib.gunzipSync(buf);
+      case 'deflate':
+        // 历史上 deflate 有 zlib 头和裸流两种实现
+        try { return zlib.inflateSync(buf); } catch (_) { return zlib.inflateRawSync(buf); }
+      case 'zstd':
+        return typeof zlib.zstdDecompressSync === 'function' ? zlib.zstdDecompressSync(buf) : null;
+      default: return null;
+    }
+  } catch (_) {
+    return null;
+  }
+}
+
+// 线上响应普遍是 br/gzip 压缩字节，解压后再入库：详情展示和下载拿到的都是真实内容
+function decodeEntryBody(entry, kind) {
+  const headers = kind === 'req' ? entry.reqHeaders : entry.resHeaders;
+  const truncated = kind === 'req' ? entry.reqBodyTruncated : entry.resBodyTruncated;
+  const body = kind === 'req' ? entry.reqBody : entry.resBody;
+  const ce = String((headers && headers['content-encoding']) || '').toLowerCase().trim();
+  if (!body || !body.length || truncated || !ce || ce === 'identity') return;
+  const decoded = tryDecodeBody(body, ce);
+  if (!decoded) return;
+  if (decoded.length > MAX_BODY_BYTES) {
+    if (kind === 'req') entry.reqBodyTruncated = true; else entry.resBodyTruncated = true;
+  }
+  // 头部与解压后的字节保持一致（去掉编码/长度），已解压标记由 detail 透出给界面提示
+  delete headers['content-encoding'];
+  delete headers['content-length'];
+  entry[kind === 'req' ? 'reqBodyDecoded' : 'resBodyDecoded'] = ce;
+  entry[kind === 'req' ? 'reqBody' : 'resBody'] = decoded.subarray(0, MAX_BODY_BYTES);
+}
 
 function startProxy({ port, host, store, sslCaDir, upstream, processMap, onReady }) {
   const proxy = new Proxy();
@@ -103,6 +141,7 @@ function startProxy({ port, host, store, sslCaDir, upstream, processMap, onReady
 
     ctx.onRequestEnd((ctx2, cb) => {
       entry.reqBody = Buffer.concat(reqChunks);
+      decodeEntryBody(entry, 'req');
       return cb();
     });
 
@@ -121,6 +160,7 @@ function startProxy({ port, host, store, sslCaDir, upstream, processMap, onReady
 
     ctx.onResponseEnd((ctx2, cb) => {
       entry.resBody = Buffer.concat(resChunks);
+      decodeEntryBody(entry, 'res');
       store.finalize(entry, { reqSize, resSize });
       return cb();
     });

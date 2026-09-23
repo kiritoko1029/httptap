@@ -730,6 +730,10 @@ function toCurl(d) {
   }
   const body = exportBody(d);
   if (body) parts.push(`--data-raw ${shellQuote(body)}`);
+  // 响应是二进制/文件：直接落盘，避免 curl 的 binary output 警告
+  if (d.resBody && d.resBody.encoding === 'base64') {
+    parts.push(`-o ${shellQuote(d.resFileName || 'response.bin')}`);
+  }
   return parts.join(' \\\n  ');
 }
 
@@ -739,8 +743,11 @@ function toFetch(d) {
   if (Object.keys(headers).length) opts.headers = headers;
   const body = exportBody(d);
   if (body) opts.body = body;
-  return `fetch(${JSON.stringify(d.url)}, ${JSON.stringify(opts, null, 2)})\n` +
-    `  .then((res) => res.json())\n  .then(console.log);`;
+  // 二进制响应按 Blob 处理，res.json() 会直接解析失败
+  const tail = d.resBody && d.resBody.encoding === 'base64'
+    ? `  .then((res) => res.blob())\n  .then((blob) => console.log(blob.size, blob.type));`
+    : `  .then((res) => res.json())\n  .then(console.log);`;
+  return `fetch(${JSON.stringify(d.url)}, ${JSON.stringify(opts, null, 2)})\n` + tail;
 }
 
 function renderDetail() {
@@ -811,6 +818,11 @@ function renderDetail() {
       : esc(currentRaw);
     bodyHtml = `<pre id="detailBody">${inner}</pre>`;
   }
+
+  // 体在传输时是压缩的（br/gzip 等），代理解压后展示，给出提示
+  const decodedFrom = currentTab === 'resBody' ? d.resBodyDecoded
+    : currentTab === 'reqBody' ? d.reqBodyDecoded : null;
+  if (decodedFrom) badge += ` <span class="muted" style="font-size:12px">已解压 ${esc(decodedFrom)}</span>`;
 
   detailPane.innerHTML = `
     <div id="detailHead">
