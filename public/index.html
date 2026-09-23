@@ -154,6 +154,24 @@
     font-family: Menlo, Consolas, monospace;
     white-space: pre-wrap; word-break: break-all;
   }
+  /* 二进制/文件响应卡片（渲染在 #detailBody pre 内，需重置字体与换行） */
+  .file-card {
+    display: flex; flex-direction: column; align-items: flex-start; gap: 10px;
+    padding: 20px 4px; white-space: normal;
+    font-family: -apple-system, "SF Pro Text", "PingFang SC", sans-serif;
+  }
+  .file-card .file-preview {
+    max-width: 100%; max-height: 320px; object-fit: contain;
+    border: 1px solid var(--border); border-radius: 6px; background: var(--bg2);
+  }
+  .file-card .file-name { font-size: 14px; font-weight: 600; word-break: break-all; }
+  .file-card .file-meta { font-size: 12px; color: var(--muted); }
+  .file-card .file-warn { font-size: 12px; color: var(--c-s4); }
+  .file-card .file-dl {
+    display: inline-block; background: var(--accent); border: 1px solid var(--accent);
+    color: #fff; padding: 6px 14px; border-radius: 6px; font-size: 13px; text-decoration: none;
+  }
+  .file-card .file-dl:hover { filter: brightness(1.15); }
   #empty { padding: 40px; text-align: center; color: var(--muted); font-size: 14px; }
   .mask {
     position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 10;
@@ -294,7 +312,7 @@ let selectedId = null;
 let currentTab = 'resBody';
 let currentDetail = null;
 let currentRaw = '';   // 当前 tab 的原始文本（用于复制）
-let currentLang = '';  // 'json' | 'headers' | 'sse' | ''
+let currentLang = '';  // 'json' | 'headers' | 'sse' | 'file' | ''
 let sseView = 'events'; // SSE 视图：events | text | raw
 const collapsed = new Set();  // 被折叠的域名分组
 // 置顶分组（持久化）
@@ -322,6 +340,11 @@ function fmtSize(n) {
 }
 function fmtTime(ts) {
   return new Date(ts).toLocaleTimeString('zh-CN', { hour12: false });
+}
+// base64 串对应的原始字节数
+function base64Bytes(s) {
+  const pad = s.endsWith('==') ? 2 : s.endsWith('=') ? 1 : 0;
+  return Math.max(0, Math.floor(s.length * 3 / 4) - pad);
 }
 
 // 取 URL 的根域名（含常见二级后缀如 com.cn / co.uk）
@@ -661,7 +684,9 @@ function renderBody(b, headers, truncated) {
       } catch (_) {}
     }
   } else {
-    text = `[二进制内容, base64, ${Math.round(b.data.length * 3 / 4)} 字节]\n\n${b.data}`;
+    // 二进制/文件体：不再铺 base64 原文，由详情渲染成文件卡片 + 下载按钮
+    text = '';
+    lang = 'file';
   }
   return { text, lang, events, note: truncated ? '\n\n…(内容过大，已截断)' : '' };
 }
@@ -760,6 +785,25 @@ function renderDetail() {
           <pre>${e.json !== null ? highlightJSON(JSON.stringify(e.json, null, 2)) : esc(e.data || '(无数据)')}</pre>
         </div>`).join('') || '<div class="muted" style="padding:20px">未解析到事件</div>'}</div>`;
     }
+  } else if (currentLang === 'file') {
+    // 二进制/文件体：文件卡片 + 原始字节下载（请求体标签页对应上传的文件）
+    const which = currentTab === 'reqBody' ? 'req' : 'res';
+    const headers = which === 'req' ? d.reqHeaders : d.resHeaders;
+    const body = which === 'req' ? d.reqBody : d.resBody;
+    const truncated = which === 'req' ? d.reqBodyTruncated : d.resBodyTruncated;
+    const ct = String((headers && headers['content-type']) || 'application/octet-stream')
+      .split(';')[0].trim();
+    const name = (which === 'req' ? d.reqFileName : d.resFileName) || 'download';
+    const dlUrl = `/api/requests/${d.id}/download?which=${which}`;
+    badge = '<span class="muted" style="font-size:12px">文件</span>';
+    currentRaw = '';
+    bodyHtml = `<div class="file-card">
+      ${/^image\//i.test(ct) && !truncated ? `<img class="file-preview" src="${dlUrl}&inline=1" alt="${esc(name)}">` : ''}
+      <div class="file-name">${esc(name)}</div>
+      <div class="file-meta">${esc(ct)} · ${fmtSize(base64Bytes(body.data))}</div>
+      ${truncated ? '<div class="file-warn">内容过大已被截断，下载的文件不完整</div>' : ''}
+      <a class="file-dl" href="${dlUrl}" download>下载文件</a>
+    </div>`;
   } else {
     currentRaw = out.text + (out.note || '');
     const inner = currentLang === 'json' ? highlightJSON(out.text)
@@ -809,8 +853,9 @@ function renderDetail() {
     copyText(code, exportBtn, '复制请求代码');
   };
 
-  // 悬浮按钮：复制当前内容
+  // 悬浮按钮：复制当前内容（文件卡片没有可复制的文本，隐藏）
   const copyContentBtn = document.getElementById('copyContentBtn');
+  copyContentBtn.style.display = currentLang === 'file' ? 'none' : '';
   copyContentBtn.onclick = () => copyText(currentRaw, copyContentBtn, '复制');
 }
 

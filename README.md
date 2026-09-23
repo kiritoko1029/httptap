@@ -13,6 +13,7 @@
 - 按根域名分组、置顶、折叠，支持排序与多条件筛选
 - 请求/响应头和请求/响应体查看，JSON 自动格式化与语法高亮
 - SSE 流式响应（如 AI 接口）事件级解析与聚合文本视图
+- 二进制/文件响应以卡片展示（文件名、类型、大小），图片可直接预览，一键下载原始字节（上传的文件同样可从「请求体」标签页取回）
 - 一键导出 cURL / fetch 代码
 - URL 过滤、一键清空、最多保留最近 500 条
 
@@ -194,6 +195,7 @@ Windows 下 `run` 通过 cmd.exe 启动子进程（兼容 npm 这类 .cmd 命令
 | --- | --- |
 | `GET /api/requests` | 请求列表（摘要） |
 | `GET /api/requests/:id` | 单个请求完整详情 |
+| `GET /api/requests/:id/download?which=res\|req` | 下载响应/请求体原始字节（文件名取自 Content-Disposition 或 URL，`&inline=1` 用于页面内预览；体被截断时带 `x-body-truncated: 1`） |
 | `GET /api/stream` | SSE 实时推送新请求 |
 | `GET /api/config` | 代理端口与上游代理信息 |
 | `POST /api/clear` | 清空记录 |

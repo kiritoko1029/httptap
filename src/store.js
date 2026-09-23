@@ -2,12 +2,22 @@
 
 const MAX_BODY_BYTES = 2 * 1024 * 1024; // 单个请求/响应体最多缓存 2MB
 
-const TEXTUAL_CONTENT_TYPE = /text|json|xml|javascript|x-www-form-urlencoded|html|svg|csv/i;
+// 判断是否文本体：按 MIME 类型/子类型精确匹配，避免 application/vnd.openxmlformats-…
+// 这类二进制 Office 文档因子串包含 "xml" 被误判为文本（会显示成乱码而非文件卡片）
+function isTextualContentType(ct) {
+  const mime = String(ct || '').split(';')[0].trim().toLowerCase();
+  const slash = mime.indexOf('/');
+  if (slash < 0) return false;
+  const type = mime.slice(0, slash);
+  const sub = mime.slice(slash + 1);
+  if (type === 'text') return true;
+  if (/^(?:json|xml|x?javascript|html|svg|csv|x-www-form-urlencoded)$/.test(sub)) return true;
+  return /[+]json$/.test(sub) || /[+]xml$/.test(sub); // RFC 6838 结构化语法后缀
+}
 
 function encodeBody(buf, headers) {
   if (!buf || buf.length === 0) return null;
-  const ct = String((headers && headers['content-type']) || '');
-  if (TEXTUAL_CONTENT_TYPE.test(ct)) {
+  if (isTextualContentType((headers && headers['content-type']) || '')) {
     return { encoding: 'utf8', data: buf.toString('utf8') };
   }
   return { encoding: 'base64', data: buf.toString('base64') };
